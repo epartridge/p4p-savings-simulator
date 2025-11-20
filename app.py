@@ -1,123 +1,135 @@
-"""Streamlit app to explore P4P savings scenarios."""
-from __future__ import annotations
-
-from typing import Dict, Tuple
-
 import pandas as pd
 import streamlit as st
 
 from model import (
-    DOLLAR_IMPACT,
-    LIVE,
-    MONTH,
     REGION,
-    calculate_scenario_savings,
+    DC_NUMBER,
+    DC_NUMBER_NAME,
+    MONTH,
+    LIVE,
     load_inputs,
-    month_order_value,
+    calculate_scenario_savings,
     build_greedy_schedule,
     build_region_grouped_schedule,
 )
 
 
 @st.cache_data
-def _load_data(path: str = "data/p4p_template.xlsx") -> pd.DataFrame:
-    """Load the P4P template data with caching."""
-
-    return load_inputs(path)
+def load_template_df() -> pd.DataFrame:
+    return load_inputs()
 
 
-def _sorted_months(df: pd.DataFrame) -> list[str]:
-    """Return unique months sorted according to the fiscal ordering where Jan is last."""
-
-    months = df[MONTH].dropna().astype(str).unique().tolist()
-    return sorted(months, key=month_order_value)
+def normalize_live_bool(series: pd.Series) -> pd.Series:
+    return series.fillna("").astype(str).str.strip().str.lower() == "yes"
 
 
-def _manual_selector(df: pd.DataFrame) -> Tuple[pd.DataFrame, float]:
-    """Render a manual selector grid for buildings and months, returning the updated DataFrame."""
-
-    months = _sorted_months(df)
-    buildings = df[[REGION, MONTH, "DC Number Name", "DC Number"]].copy()
-    buildings["DC Number Name"] = buildings["DC Number Name"].fillna(buildings["DC Number"])
-    building_keys = (
-        buildings[["DC Number", "DC Number Name"]].drop_duplicates().to_dict("records")
-    )
-
-    st.caption(
-        "Use the grid below to toggle specific building-month combinations. "
-        "Each checkbox marks that building live for the selected month."
-    )
-
-    with st.form("manual_selection"):
-        selections: Dict[Tuple[str, str], bool] = {}
-        for building in building_keys:
-            label = f"{building['DC Number Name']} (#{building['DC Number']})"
-            st.write(f"**{label}**")
-            cols = st.columns(len(months))
-            for idx, month in enumerate(months):
-                row_mask = (df["DC Number"] == building["DC Number"]) & (df[MONTH] == month)
-                default_live = False
-                if row_mask.any():
-                    current = df.loc[row_mask, LIVE].iloc[0]
-                    default_live = str(current).strip().lower() == "yes"
-                selections[(building["DC Number"], month)] = cols[idx].checkbox(
-                    month, value=default_live, key=f"{building['DC Number']}-{month}"
-                )
-
-        submitted = st.form_submit_button("Update scenario")
-
-    updated = df.copy()
-    if submitted:
-        updated[LIVE] = "No"
-        for (dc_number, month), is_live in selections.items():
-            mask = (updated["DC Number"] == dc_number) & (updated[MONTH] == month)
-            if is_live:
-                updated.loc[mask, LIVE] = "Yes"
-
-    return calculate_scenario_savings(updated)
+def sorted_month_labels(months: pd.Index | list) -> list:
+    months_list = list(months)
+    numeric_months = pd.to_numeric(pd.Series(months_list), errors="coerce")
+    if not numeric_months.isna().any():
+        sorted_pairs = sorted(zip(numeric_months.tolist(), months_list), key=lambda x: x[0])
+        return [original for _, original in sorted_pairs]
+    return sorted(months_list, key=lambda x: str(x))
 
 
-def _optimizations(df: pd.DataFrame):
-    """Render optimization helpers to reach a target savings amount."""
-
-    st.subheader("Optimization helpers")
-    target = st.number_input("Target savings", min_value=0.0, value=0.0, step=100000.0)
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        if st.button("Run greedy by Dollar Impact"):
-            greedy_df, greedy_total = build_greedy_schedule(df, target)
-            st.success(f"Greedy schedule total savings: ${greedy_total:,.2f}")
-            st.dataframe(greedy_df)
-
-    with col2:
-        if st.button("Run region-grouped schedule"):
-            grouped_df, grouped_total = build_region_grouped_schedule(df, target)
-            st.success(
-                "Region-grouped schedule total savings: " f"${grouped_total:,.2f}"
-            )
-            st.dataframe(grouped_df)
+def align_month_dtype(month_values: pd.Series, template_months: pd.Series) -> pd.Series:
+    template_numeric = pd.to_numeric(template_months, errors="coerce")
+    if not template_numeric.isna().any():
+        return pd.to_numeric(month_values, errors="coerce")
+    return month_values.astype(str)
 
 
-def main():
+def main() -> None:
     st.title("P4P Savings Simulator")
     st.write(
-        "Explore different ways to reach a target savings amount, including manual "
-        "building-month toggles and automated optimizations."
+        "Interactively explore manual and optimized activation schedules to reach your target FY26 savings."
     )
-    df = _load_data()
 
-    manual_tab, optim_tab = st.tabs(["Manual selection", "Optimizations"])
+    df = load_template_df()
+
+    target_savings = st.number_input(
+        "Target FY26 savings ($)", min_value=0.0, value=0.0, step=100000.0, format="%.0f"
+    )
+
+    manual_tab, optimizations_tab = st.tabs(["Manual selection", "Optimizations"])
 
     with manual_tab:
-        st.subheader("Manual building-month activation")
-        manual_df, manual_total = _manual_selector(df)
-        st.success(f"Current manual selection total savings: ${manual_total:,.2f}")
-        st.dataframe(manual_df)
+        manual_df = df.copy()
+        manual_df["IsLiveBool"] = normalize_live_bool(manual_df[LIVE])
 
-    with optim_tab:
-        _optimizations(df)
+        pivot = manual_df.pivot_table(
+            index=[REGION, DC_NUMBER, DC_NUMBER_NAME],
+            columns=MONTH,
+            values="IsLiveBool",
+            aggfunc="first",
+        )
+
+        pivot = pivot.reindex(columns=sorted_month_labels(pivot.columns), fill_value=False)
+        pivot = pivot.fillna(False)
+        pivot.columns.name = None
+        pivot_reset = pivot.reset_index()
+
+        edited_pivot = st.data_editor(pivot_reset, use_container_width=True, num_rows="dynamic")
+
+        month_columns = [
+            col for col in edited_pivot.columns if col not in [REGION, DC_NUMBER, DC_NUMBER_NAME]
+        ]
+
+        edited_long = edited_pivot.melt(
+            id_vars=[REGION, DC_NUMBER, DC_NUMBER_NAME],
+            value_vars=month_columns,
+            var_name="MonthStr",
+            value_name="IsLiveBool",
+        )
+
+        edited_long[MONTH] = align_month_dtype(edited_long["MonthStr"], df[MONTH])
+        edited_long = edited_long.drop(columns=["MonthStr"])
+
+        updated_df = df.copy()
+        updated_df[LIVE] = "No"
+
+        merged = updated_df.merge(
+            edited_long,
+            how="left",
+            on=[REGION, DC_NUMBER, DC_NUMBER_NAME, MONTH],
+        )
+
+        updated_df[LIVE] = merged["IsLiveBool"].fillna(False).map({True: "Yes", False: "No"})
+
+        manual_result_df, manual_total = calculate_scenario_savings(updated_df)
+
+        st.markdown(f"**Current manual selection total savings: ${manual_total:,.0f}**")
+        if target_savings > 0:
+            if manual_total >= target_savings:
+                st.info(
+                    f"Target reached! You exceed the target by ${manual_total - target_savings:,.0f}."
+                )
+            else:
+                st.warning(
+                    f"Still short of target by ${target_savings - manual_total:,.0f}. "
+                    "Consider adjusting selections or running optimizations."
+                )
+
+        st.dataframe(manual_result_df, use_container_width=True)
+
+    with optimizations_tab:
+        if target_savings <= 0:
+            st.warning("Enter a positive target savings above to run optimizations.")
+            return
+
+        col1, col2 = st.columns(2)
+        run_greedy = col1.button("Run greedy by Dollar Impact", use_container_width=True)
+        run_region_grouped = col2.button("Run region-grouped schedule", use_container_width=True)
+
+        if run_greedy:
+            greedy_df, greedy_total = build_greedy_schedule(df, target_savings)
+            st.success(f"Greedy schedule total savings: ${greedy_total:,.0f}")
+            st.dataframe(greedy_df, use_container_width=True)
+
+        if run_region_grouped:
+            region_df, region_total = build_region_grouped_schedule(df, target_savings)
+            st.success(f"Region-grouped schedule total savings: ${region_total:,.0f}")
+            st.dataframe(region_df, use_container_width=True)
 
 
 if __name__ == "__main__":
