@@ -11,7 +11,7 @@ DC_NUMBER = "DC Number"
 DC_NAME = "DC Name"
 DC_NUMBER_NAME = "DC Number Name"
 MONTH = "Month"
-PERCENT_COMMITMENT = "% Commitment"
+PERCENT_COMMITMENT = "%  Commitment"
 DOLLAR_IMPACT = "Dollar Impact"
 LIVE = "Live?"
 
