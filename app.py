@@ -3,9 +3,9 @@ import streamlit as st
 
 from model import (
     REGION,
-    DC_NUMBER,
     DC_NUMBER_NAME,
     MONTH,
+    MONTH_ORDER,
     LIVE,
     load_inputs,
     calculate_scenario_savings,
@@ -23,13 +23,26 @@ def normalize_live_bool(series: pd.Series) -> pd.Series:
     return series.fillna("").astype(str).str.strip().str.lower() == "yes"
 
 
-def sorted_month_labels(months: pd.Index | list) -> list:
-    months_list = list(months)
-    numeric_months = pd.to_numeric(pd.Series(months_list), errors="coerce")
-    if not numeric_months.isna().any():
-        sorted_pairs = sorted(zip(numeric_months.tolist(), months_list), key=lambda x: x[0])
-        return [original for _, original in sorted_pairs]
-    return sorted(months_list, key=lambda x: str(x))
+def ordered_month_labels(months: pd.Index | list) -> list:
+    month_set = set(months)
+    ordered = [month for month in MONTH_ORDER if month in month_set]
+    extras = [month for month in months if month not in ordered]
+    return ordered + extras
+
+
+def enforce_forward_month_selection(df: pd.DataFrame, month_columns: list[str]) -> pd.DataFrame:
+    """Ensure that selecting a month also selects every later month in the year."""
+
+    ordered_months = ordered_month_labels(month_columns)
+    enforced_df = df.copy()
+    for idx, row in enforced_df.iterrows():
+        seen_selected = False
+        for month in ordered_months:
+            current_value = bool(row.get(month, False))
+            seen_selected = seen_selected or current_value
+            if seen_selected:
+                enforced_df.at[idx, month] = True
+    return enforced_df
 
 
 def align_month_dtype(month_values: pd.Series, template_months: pd.Series) -> pd.Series:
@@ -51,32 +64,54 @@ def main() -> None:
         "Target FY26 savings ($)", min_value=0.0, value=0.0, step=100000.0, format="%.0f"
     )
 
+    base_df = df.copy()
+    base_df["IsLiveBool"] = normalize_live_bool(base_df[LIVE])
+
+    base_pivot = base_df.pivot_table(
+        index=[REGION, DC_NUMBER_NAME],
+        columns=MONTH,
+        values="IsLiveBool",
+        aggfunc="first",
+    )
+
+    base_pivot = base_pivot.reindex(columns=ordered_month_labels(base_pivot.columns), fill_value=False)
+    base_pivot = base_pivot.fillna(False)
+    base_pivot.columns.name = None
+    base_pivot_reset = base_pivot.reset_index()
+    month_columns = [col for col in base_pivot_reset.columns if col not in [REGION, DC_NUMBER_NAME]]
+
+    column_config = {
+        REGION: st.column_config.TextColumn(label=REGION, disabled=True, width="medium"),
+        DC_NUMBER_NAME: st.column_config.TextColumn(
+            label=DC_NUMBER_NAME, disabled=True, width="large"
+        ),
+    }
+    column_config.update(
+        {month: st.column_config.CheckboxColumn(label=month, width="small") for month in month_columns}
+    )
+
+    column_order = [REGION, DC_NUMBER_NAME] + month_columns
+
     manual_tab, optimizations_tab = st.tabs(["Manual selection", "Optimizations"])
 
     with manual_tab:
-        manual_df = df.copy()
-        manual_df["IsLiveBool"] = normalize_live_bool(manual_df[LIVE])
+        if "manual_pivot_data" not in st.session_state:
+            st.session_state["manual_pivot_data"] = base_pivot_reset
 
-        pivot = manual_df.pivot_table(
-            index=[REGION, DC_NUMBER, DC_NUMBER_NAME],
-            columns=MONTH,
-            values="IsLiveBool",
-            aggfunc="first",
+        edited_pivot = st.data_editor(
+            st.session_state["manual_pivot_data"],
+            use_container_width=True,
+            num_rows="dynamic",
+            column_config=column_config,
+            column_order=column_order,
+            key="manual_pivot_editor",
         )
 
-        pivot = pivot.reindex(columns=sorted_month_labels(pivot.columns), fill_value=False)
-        pivot = pivot.fillna(False)
-        pivot.columns.name = None
-        pivot_reset = pivot.reset_index()
+        enforced_pivot = enforce_forward_month_selection(edited_pivot, month_columns)
+        st.session_state["manual_pivot_data"] = enforced_pivot
 
-        edited_pivot = st.data_editor(pivot_reset, use_container_width=True, num_rows="dynamic")
-
-        month_columns = [
-            col for col in edited_pivot.columns if col not in [REGION, DC_NUMBER, DC_NUMBER_NAME]
-        ]
-
-        edited_long = edited_pivot.melt(
-            id_vars=[REGION, DC_NUMBER, DC_NUMBER_NAME],
+        edited_long = enforced_pivot.melt(
+            id_vars=[REGION, DC_NUMBER_NAME],
             value_vars=month_columns,
             var_name="MonthStr",
             value_name="IsLiveBool",
@@ -91,7 +126,7 @@ def main() -> None:
         merged = updated_df.merge(
             edited_long,
             how="left",
-            on=[REGION, DC_NUMBER, DC_NUMBER_NAME, MONTH],
+            on=[REGION, DC_NUMBER_NAME, MONTH],
         )
 
         updated_df[LIVE] = merged["IsLiveBool"].fillna(False).map({True: "Yes", False: "No"})
@@ -116,6 +151,17 @@ def main() -> None:
         if target_savings <= 0:
             st.warning("Enter a positive target savings above to run optimizations.")
             return
+
+        st.write("Current DC / Month view")
+        st.data_editor(
+            base_pivot_reset,
+            use_container_width=True,
+            column_config=column_config,
+            column_order=column_order,
+            disabled=True,
+            hide_index=True,
+            key="optimization_dc_month_grid",
+        )
 
         col1, col2 = st.columns(2)
         run_greedy = col1.button("Run greedy by Dollar Impact", use_container_width=True)
