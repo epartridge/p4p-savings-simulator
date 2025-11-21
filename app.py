@@ -251,20 +251,16 @@ def main() -> None:
                 unsafe_allow_html=True,
             )
             uploader_slot = st.empty()
+            status_slot = st.empty()
 
         with spacer:
             template_export_slot = st.empty()
             manual_download_slot = st.empty()
 
-    description_col, status_col = st.columns([3, 2])
-    with description_col:
-        st.markdown(
-            "Interactively explore manual and optimized activation schedules to reach your target FY26 savings.",
-            help=None,
-        )
-
-    with status_col:
-        status_slot = st.empty()
+    st.markdown(
+        "Interactively explore manual and optimized activation schedules to reach your target FY26 savings.",
+        help=None,
+    )
 
     uploaded_file = uploader_slot.file_uploader(
         "Upload P4P template (.xlsx)",
@@ -278,17 +274,38 @@ def main() -> None:
     # avoid reloading on every interaction.
     if uploaded_file is not None:
         df = _load_data_from_source(uploaded_file.getvalue())
-        status_slot.success("Using uploaded template")
+        status_slot.markdown(
+            "<div style='display:flex; justify-content:flex-end;'>"
+            "<div style='display:inline-flex; align-items:center; padding:0.5rem 0.75rem; "
+            "border-radius:10px; background-color:#e6f4ea; color:#0f5132; "
+            "border:1px solid #a3d7a5; font-weight:600;'>"
+            "Using uploaded template"
+            "</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
     else:
         df = _load_data_from_source(None)
-        status_slot.info("Using default template")
+        status_slot.markdown(
+            "<div style='display:flex; justify-content:flex-end;'>"
+            "<div style='display:inline-flex; align-items:center; padding:0.5rem 0.75rem; "
+            "border-radius:10px; background-color:#e7f1fb; color:#084298; "
+            "border:1px solid #b6cff5; font-weight:600;'>"
+            "Using default template"
+            "</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
     # Users enter the target savings that optimization routines will try to
     # reach. Keeping ``step`` at a large increment makes entry easier for big
     # numbers.
-    label_col, input_col = st.columns([1.2, 0.6])
+    label_col, input_col, _ = st.columns([3, 2, 5])
     with label_col:
-        st.markdown("Target FY26 savings ($):")
+        st.markdown(
+            "<div style='white-space: nowrap; font-weight:600;'>Target FY26 savings ($):</div>",
+            unsafe_allow_html=True,
+        )
     with input_col:
         target_savings = st.number_input(
             "Target FY26 savings ($)",
@@ -319,9 +336,9 @@ def main() -> None:
     # identifiers are read-only text, while the month columns become checkbox
     # columns to let users toggle live months.
     column_config = {
-        REGION: st.column_config.TextColumn(label=REGION, disabled=True, width="medium"),
+        REGION: st.column_config.TextColumn(label=REGION, disabled=True, width="small"),
         DC_NUMBER_NAME: st.column_config.TextColumn(
-            label=DC_NUMBER_NAME, disabled=True, width="large"
+            label=DC_NUMBER_NAME, disabled=True, width="medium"
         ),
     }
     column_config.update(
