@@ -233,13 +233,17 @@ def main() -> None:
 
     st.set_page_config(layout="wide")
 
-    title_col, status_col, upload_col, export_col = st.columns([3, 2, 2.4, 2.4], gap="small")
-    with title_col:
-        st.title("P4P Savings Simulator")
+    _spacer, status_col, upload_col, export_col = st.columns(
+        [3, 2, 2.4, 2.4], gap="small"
+    )
 
     status_box = status_col.container(border=True, height=150)
     upload_box = upload_col.container(border=True, height=150)
     export_box = export_col.container(border=True, height=150)
+
+    title_row, _ = st.columns([3, 1], gap="small")
+    with title_row:
+        st.title("P4P Savings Simulator")
 
     with status_box:
         st.markdown("**Template source**")
@@ -317,10 +321,10 @@ def main() -> None:
     # Users enter the target savings that optimization routines will try to
     # reach. Keeping ``step`` at a large increment makes entry easier for big
     # numbers.
-    label_col, input_col = st.columns([3, 2], gap="small")
+    label_col, input_col = st.columns([1.6, 1], gap="small")
     with label_col:
         st.markdown(
-            "<div style='white-space: nowrap; font-weight:600;'>Target FY26 savings ($):</div>",
+            "<div style='white-space: nowrap; font-weight:600; margin-bottom:0.25rem;'>Target FY26 savings ($):</div>",
             unsafe_allow_html=True,
         )
     with input_col:
