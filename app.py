@@ -244,15 +244,18 @@ def main() -> None:
         st.title("P4P Savings Simulator")
 
     with header_right:
-        label_row_left, label_row_right = st.columns([1, 1])
-        with label_row_left:
-            st.markdown("**Upload P4P template (.xlsx)**")
-        status_slot = label_row_right.empty()
+        spacer, upload_column = st.columns([0.6, 1])
+        with upload_column:
+            st.markdown(
+                "<div style='text-align:right; font-weight:600;'>Upload P4P template (.xlsx)</div>",
+                unsafe_allow_html=True,
+            )
+            uploader_slot = st.empty()
+            status_slot = st.empty()
 
-        action_row_left, action_row_right = st.columns([1.2, 1])
-        uploader_slot = action_row_left.empty()
-        template_export_slot = action_row_right.empty()
-        manual_download_slot = action_row_right.empty()
+        with spacer:
+            template_export_slot = st.empty()
+            manual_download_slot = st.empty()
 
     uploaded_file = uploader_slot.file_uploader(
         "Upload P4P template (.xlsx)",
@@ -270,17 +273,23 @@ def main() -> None:
     # avoid reloading on every interaction.
     if uploaded_file is not None:
         df = _load_data_from_source(uploaded_file.getvalue())
-        status_slot.success("Using uploaded template.")
+        status_slot.success("Using uploaded template")
     else:
         df = _load_data_from_source(None)
-        status_slot.info("Using default template from data/p4p_template.xlsx.")
+        status_slot.info("Using default template")
 
     # Users enter the target savings that optimization routines will try to
     # reach. Keeping ``step`` at a large increment makes entry easier for big
     # numbers.
-    target_savings = st.number_input(
-        "Target FY26 savings ($)", min_value=0.0, value=0.0, step=100000.0, format="%.0f"
-    )
+    target_col, _ = st.columns([1, 2])
+    with target_col:
+        target_savings = st.number_input(
+            "Target FY26 savings ($)",
+            min_value=0.0,
+            value=0.0,
+            step=100000.0,
+            format="%.0f",
+        )
 
     # Build a pivoted version of the dataset that Streamlit can display as a
     # calendar grid. ``base_pivot_reset`` holds the table, and ``month_columns``
