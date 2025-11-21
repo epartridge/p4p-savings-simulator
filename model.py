@@ -170,6 +170,7 @@ def build_greedy_schedule(df: pd.DataFrame, target_savings: float) -> tuple[pd.D
     ).fillna(0.0)
     scheduled_df["_month_order"] = scheduled_df[MONTH].apply(month_order_value)
 
+    # Apply any DC-specific live locks up front
     scheduled_df = apply_dc_live_locks(scheduled_df, preserve_month_order=True)
 
     # Prioritize the highest impact buildings so we fill their calendars first.
@@ -195,13 +196,17 @@ def build_greedy_schedule(df: pd.DataFrame, target_savings: float) -> tuple[pd.D
                 dc_mask & (scheduled_df["_month_order"] >= month_order), LIVE
             ] = "Yes"
 
+            # Re-apply DC live locks after each change
             scheduled_df = apply_dc_live_locks(
                 scheduled_df, preserve_month_order=True
             )
 
             live_mask = _normalize_live_column(scheduled_df[LIVE]) == "yes"
-            cumulative_savings = float(scheduled_df.loc[live_mask, DOLLAR_IMPACT].sum())
+            cumulative_savings = float(
+                scheduled_df.loc[live_mask, DOLLAR_IMPACT].sum()
+            )
 
+    # Ensure each DC is live in its final month and cascade forward, then re-lock
     scheduled_df = ensure_final_month_live(scheduled_df, preserve_month_order=True)
     scheduled_df = apply_dc_live_locks(scheduled_df, preserve_month_order=True)
 
@@ -216,6 +221,7 @@ def build_greedy_schedule(df: pd.DataFrame, target_savings: float) -> tuple[pd.D
     scheduled_df = scheduled_df.drop(columns=["_month_order"], errors="ignore")
 
     return scheduled_df, cumulative_savings
+
 
 
 def build_region_grouped_schedule(df: pd.DataFrame, target_savings: float) -> tuple[pd.DataFrame, float]:
@@ -248,7 +254,9 @@ def build_region_grouped_schedule(df: pd.DataFrame, target_savings: float) -> tu
         .sum()
         .reset_index()
     )
-    region_month_savings["_month_order"] = region_month_savings[MONTH].apply(month_order_value)
+    region_month_savings["_month_order"] = region_month_savings[MONTH].apply(
+        month_order_value
+    )
 
     # Order regions by their total impact so the highest contributors are evaluated first.
     region_priority = (
@@ -274,16 +282,21 @@ def build_region_grouped_schedule(df: pd.DataFrame, target_savings: float) -> tu
             month_mask = scheduled_df[MONTH] == row[MONTH]
             scheduled_df.loc[region_mask & month_mask, LIVE] = "Yes"
 
-            # Enforce that once a DC goes live in a month, it stays live for the
-            # remainder of the year.
+            # Enforce that once a DC goes live in a month, it stays live for the remainder of the year.
             scheduled_df = enforce_forward_live_rows(
                 scheduled_df, preserve_month_order=True
             )
-            scheduled_df = apply_dc_live_locks(scheduled_df, preserve_month_order=True)
+            # Apply DC-specific live locks on top
+            scheduled_df = apply_dc_live_locks(
+                scheduled_df, preserve_month_order=True
+            )
 
             live_mask = _normalize_live_column(scheduled_df[LIVE]) == "yes"
-            cumulative_savings = float(scheduled_df.loc[live_mask, DOLLAR_IMPACT].sum())
+            cumulative_savings = float(
+                scheduled_df.loc[live_mask, DOLLAR_IMPACT].sum()
+            )
 
+    # Ensure each DC is live in its final month and cascade forward, then re-lock
     scheduled_df = ensure_final_month_live(scheduled_df, preserve_month_order=True)
     scheduled_df = apply_dc_live_locks(scheduled_df, preserve_month_order=True)
 
