@@ -239,19 +239,27 @@ def main() -> None:
 
     st.set_page_config(layout="wide")
 
-    header_left, header_right = st.columns([3, 2])
-    with header_left:
+    title_col, status_col, upload_col, export_col = st.columns([3, 2, 2.4, 2.4], gap="small")
+    with title_col:
         st.title("P4P Savings Simulator")
 
-    with header_right:
-        download_column, upload_column = st.columns([0.9, 2], gap="small")
-        with download_column:
-            template_export_slot = st.empty()
-            manual_download_slot = st.empty()
+    status_box = status_col.container(border=True, height=150)
+    upload_box = upload_col.container(border=True, height=150)
+    export_box = export_col.container(border=True, height=150)
 
-        with upload_column:
-            status_slot = st.empty()
-            uploader_slot = st.empty()
+    with status_box:
+        st.markdown("**Template source**")
+        status_slot = st.empty()
+
+    with upload_box:
+        st.markdown("**Import template**")
+        uploader_slot = st.empty()
+
+    with export_box:
+        st.markdown("**Export**")
+        uph_export_slot = st.empty()
+        template_export_slot = st.empty()
+        manual_download_slot = st.empty()
 
     st.markdown(
         "Interactively explore manual and optimized activation schedules to reach your target FY26 savings.",
@@ -514,6 +522,14 @@ def main() -> None:
     latest_manual_result_df = st.session_state.get("latest_manual_result_df")
     template_export_df = st.session_state.get("latest_template_df", df)
     template_export_bytes = make_download_excel(template_export_df)
+    if latest_manual_result_df is not None:
+        uph_plan_bytes = make_download_excel(latest_manual_result_df)
+        uph_export_slot.download_button(
+            label="Export UPH Plan Output (.xlsx)",
+            data=uph_plan_bytes,
+            file_name="p4p_uph_plan_output.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
     template_export_slot.download_button(
         label="Export current template data (.xlsx)",
         data=template_export_bytes,
