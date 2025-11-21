@@ -108,7 +108,7 @@ def calculate_scenario_savings(df: pd.DataFrame) -> tuple[pd.DataFrame, float]:
 
 def build_greedy_schedule(df: pd.DataFrame, target_savings: float) -> tuple[pd.DataFrame, float]:
     """
-    Starting from all Live? = 'No', greedily turn rows live by highest Dollar Impact until target is met.
+    Starting from all Live? = 'No', greedily turn rows live prioritizing later months then Dollar Impact.
 
     Args:
         df: Input DataFrame containing at least the Dollar Impact column.
@@ -120,14 +120,27 @@ def build_greedy_schedule(df: pd.DataFrame, target_savings: float) -> tuple[pd.D
 
     scheduled_df = df.copy()
     scheduled_df[LIVE] = "No"
-    scheduled_df[DOLLAR_IMPACT] = pd.to_numeric(scheduled_df[DOLLAR_IMPACT], errors="coerce").fillna(0.0)
+    scheduled_df[DOLLAR_IMPACT] = pd.to_numeric(
+        scheduled_df[DOLLAR_IMPACT], errors="coerce"
+    ).fillna(0.0)
+    scheduled_df["_month_order"] = scheduled_df[MONTH].apply(month_order_value)
 
     cumulative_savings = 0.0
-    for idx in scheduled_df.sort_values(by=DOLLAR_IMPACT, ascending=False).index:
+    for idx in scheduled_df.sort_values(
+        by=["_month_order", DOLLAR_IMPACT], ascending=[False, False]
+    ).index:
         if cumulative_savings >= target_savings:
             break
-        cumulative_savings += float(scheduled_df.at[idx, DOLLAR_IMPACT])
-        scheduled_df.at[idx, LIVE] = "Yes"
+
+        # Turn the selected month live and cascade the selection forward for the
+        # same DC so that all later months remain live.
+        selected_dc = scheduled_df.at[idx, DC_NUMBER]
+        month_order = scheduled_df.at[idx, "_month_order"]
+        dc_mask = scheduled_df[DC_NUMBER] == selected_dc
+        scheduled_df.loc[dc_mask & (scheduled_df["_month_order"] >= month_order), LIVE] = "Yes"
+
+        live_mask = _normalize_live_column(scheduled_df[LIVE]) == "yes"
+        cumulative_savings = float(scheduled_df.loc[live_mask, DOLLAR_IMPACT].sum())
 
     normalized_live = _normalize_live_column(scheduled_df[LIVE])
     scheduled_df["IsLive"] = normalized_live == "yes"
@@ -137,6 +150,8 @@ def build_greedy_schedule(df: pd.DataFrame, target_savings: float) -> tuple[pd.D
 
     cumulative_savings = float(scheduled_df["DollarImpactIncluded"].sum())
 
+    scheduled_df = scheduled_df.drop(columns=["_month_order"], errors="ignore")
+
     return scheduled_df, cumulative_savings
 
 
@@ -145,7 +160,8 @@ def build_region_grouped_schedule(df: pd.DataFrame, target_savings: float) -> tu
     Greedily schedule savings by selecting whole regions in a month together.
 
     Regions are activated one month at a time (all buildings within a region for that
-    month go live together) in descending order of monthly savings until the target is met.
+    month go live together) starting from later months and then by descending monthly savings
+    until the target is met.
 
     Args:
         df: Input DataFrame containing at least Region, Month, and Dollar Impact columns.
@@ -157,7 +173,10 @@ def build_region_grouped_schedule(df: pd.DataFrame, target_savings: float) -> tu
 
     scheduled_df = df.copy()
     scheduled_df[LIVE] = "No"
-    scheduled_df[DOLLAR_IMPACT] = pd.to_numeric(scheduled_df[DOLLAR_IMPACT], errors="coerce").fillna(0.0)
+    scheduled_df[DOLLAR_IMPACT] = pd.to_numeric(
+        scheduled_df[DOLLAR_IMPACT], errors="coerce"
+    ).fillna(0.0)
+    scheduled_df["_month_order"] = scheduled_df[MONTH].apply(month_order_value)
 
     region_month_savings = (
         scheduled_df.groupby([REGION, MONTH], dropna=False)[DOLLAR_IMPACT]
@@ -168,7 +187,7 @@ def build_region_grouped_schedule(df: pd.DataFrame, target_savings: float) -> tu
 
     cumulative_savings = 0.0
     for _, row in region_month_savings.sort_values(
-        by=[DOLLAR_IMPACT, "_month_order"], ascending=[False, True]
+        by=["_month_order", DOLLAR_IMPACT], ascending=[False, False]
     ).iterrows():
         if cumulative_savings >= target_savings:
             break
@@ -176,7 +195,13 @@ def build_region_grouped_schedule(df: pd.DataFrame, target_savings: float) -> tu
         region_mask = scheduled_df[REGION] == row[REGION]
         month_mask = scheduled_df[MONTH] == row[MONTH]
         scheduled_df.loc[region_mask & month_mask, LIVE] = "Yes"
-        cumulative_savings += float(row[DOLLAR_IMPACT])
+
+        # Enforce that once a DC goes live in a month, it stays live for the
+        # remainder of the year.
+        scheduled_df = enforce_forward_live_rows(scheduled_df, preserve_month_order=True)
+
+        live_mask = _normalize_live_column(scheduled_df[LIVE]) == "yes"
+        cumulative_savings = float(scheduled_df.loc[live_mask, DOLLAR_IMPACT].sum())
 
     normalized_live = _normalize_live_column(scheduled_df[LIVE])
     scheduled_df["IsLive"] = normalized_live == "yes"
@@ -186,4 +211,42 @@ def build_region_grouped_schedule(df: pd.DataFrame, target_savings: float) -> tu
 
     cumulative_savings = float(scheduled_df["DollarImpactIncluded"].sum())
 
+    scheduled_df = scheduled_df.drop(columns=["_month_order"], errors="ignore")
+
     return scheduled_df, cumulative_savings
+
+
+def enforce_forward_live_rows(df: pd.DataFrame, preserve_month_order: bool = False) -> pd.DataFrame:
+    """Force months after a go-live to remain live for each DC.
+
+    Args:
+        df: DataFrame containing at least Month, DC Number, and Live? columns.
+        preserve_month_order: If True, keep an existing ``_month_order`` helper
+            column so callers that rely on it for sorting can continue to do so.
+
+    Returns:
+        A DataFrame with Live? values adjusted so that, for each DC, once a
+        month is live all subsequent months are also live.
+    """
+
+    enforced_df = df.copy()
+    added_month_order = False
+
+    if "_month_order" not in enforced_df.columns:
+        enforced_df["_month_order"] = enforced_df[MONTH].apply(month_order_value)
+        added_month_order = True
+
+    # Iterate through each DC in chronological order to cascade live months
+    # forward. Sorting before grouping preserves the month order inside each
+    # group iteration.
+    for _, group in enforced_df.sort_values("_month_order").groupby(DC_NUMBER, sort=False):
+        live_seen = False
+        for idx in group.index:
+            live_value = str(enforced_df.at[idx, LIVE]).strip().lower() == "yes"
+            live_seen = live_seen or live_value
+            enforced_df.at[idx, LIVE] = "Yes" if live_seen else "No"
+
+    if added_month_order and not preserve_month_order:
+        enforced_df = enforced_df.drop(columns=["_month_order"], errors="ignore")
+
+    return enforced_df

@@ -116,6 +116,43 @@ def enforce_forward_month_selection(df: pd.DataFrame, month_columns: list[str]) 
     return enforced_df
 
 
+def rebuild_dataset_from_pivot(
+    pivot_df: pd.DataFrame, month_columns: list[str], template_df: pd.DataFrame
+) -> pd.DataFrame:
+    """Merge the pivoted calendar back into the base dataset."""
+
+    edited_long = pivot_df.melt(
+        id_vars=[REGION, DC_NUMBER_NAME],
+        value_vars=month_columns,
+        var_name="MonthStr",
+        value_name="IsLiveBool",
+    )
+
+    edited_long[MONTH] = align_month_dtype(edited_long["MonthStr"], template_df[MONTH])
+    edited_long = edited_long.drop(columns=["MonthStr"])
+
+    updated_df = template_df.copy()
+    updated_df[LIVE] = "No"
+
+    merged = updated_df.merge(
+        edited_long,
+        how="left",
+        on=[REGION, DC_NUMBER_NAME, MONTH],
+    )
+
+    updated_df[LIVE] = merged["IsLiveBool"].fillna(False).map({True: "Yes", False: "No"})
+    return updated_df
+
+
+def calculate_manual_results(
+    pivot_df: pd.DataFrame, month_columns: list[str], template_df: pd.DataFrame
+) -> tuple[pd.DataFrame, float]:
+    """Calculate savings from a pivot table of manual selections."""
+
+    updated_df = rebuild_dataset_from_pivot(pivot_df, month_columns, template_df)
+    return calculate_scenario_savings(updated_df)
+
+
 def align_month_dtype(month_values: pd.Series, template_months: pd.Series) -> pd.Series:
     """Match the month data type to the template data for reliable merges.
 
@@ -158,6 +195,11 @@ def main() -> None:
 
     base_pivot_reset, month_columns = build_calendar_pivot(base_df)
 
+    if "manual_pivot_data" not in st.session_state:
+        st.session_state["manual_pivot_data"] = base_pivot_reset
+    if "optimization_calendar" not in st.session_state:
+        st.session_state["optimization_calendar"] = base_pivot_reset
+
     # Configure how each column appears inside the data editor. Region and DC
     # identifiers are read-only text, while the month columns become checkbox
     # columns to let users toggle live months.
@@ -173,20 +215,30 @@ def main() -> None:
 
     column_order = [REGION, DC_NUMBER_NAME] + month_columns
 
+    # Show current manual savings near the top of the page for quick reference.
+    _, top_manual_total = calculate_manual_results(
+        st.session_state["manual_pivot_data"], month_columns, df
+    )
+    st.markdown(f"**Current manual selection total savings: ${top_manual_total:,.0f}**")
+    if target_savings > 0:
+        if top_manual_total >= target_savings:
+            st.info(
+                f"Target reached! You exceed the target by ${top_manual_total - target_savings:,.0f}."
+            )
+        else:
+            st.warning(
+                f"Still short of target by ${target_savings - top_manual_total:,.0f}. "
+                "Consider adjusting selections or running optimizations."
+            )
+
     manual_tab, optimizations_tab = st.tabs(["Manual selection", "Optimizations"])
 
     with manual_tab:
-        # Initialize session state for the manual calendar the first time the
-        # tab is opened. Streamlit persists this across reruns to keep user
-        # edits.
-        if "manual_pivot_data" not in st.session_state:
-            st.session_state["manual_pivot_data"] = base_pivot_reset
-
         st.subheader("DC Go-Live Calendar")
         edited_pivot = st.data_editor(
             st.session_state["manual_pivot_data"],
             use_container_width=True,
-            num_rows="dynamic",
+            num_rows="fixed",
             column_config=column_config,
             column_order=column_order,
             height=calendar_height(len(st.session_state["manual_pivot_data"])),
@@ -203,53 +255,9 @@ def main() -> None:
             rerun = getattr(st, "experimental_rerun", None) or getattr(st, "rerun")
             rerun()
 
-        # Convert the pivoted table back into a long format where each row is a
-        # single (DC, month) combination. This makes it straightforward to join
-        # with the original dataset and reuse existing calculation functions.
-        edited_long = enforced_pivot.melt(
-            id_vars=[REGION, DC_NUMBER_NAME],
-            value_vars=month_columns,
-            var_name="MonthStr",
-            value_name="IsLiveBool",
-        )
-
-        # The melted data uses string month labels; convert them to match the
-        # template's dtype (numeric or string) so we can merge back accurately.
-        edited_long[MONTH] = align_month_dtype(edited_long["MonthStr"], df[MONTH])
-        edited_long = edited_long.drop(columns=["MonthStr"])
-
-        # Start from a clean copy of the base data and set every row to "No".
-        # We'll fill in "Yes" only for entries toggled on in the edited pivot.
-        updated_df = df.copy()
-        updated_df[LIVE] = "No"
-
-        # Merge the boolean edits back into the template to produce a full
-        # dataset with consistent columns.
-        merged = updated_df.merge(
-            edited_long,
-            how="left",
-            on=[REGION, DC_NUMBER_NAME, MONTH],
-        )
-
-        # Map True/False back to the original "Yes"/"No" string values that the
-        # calculation functions expect.
-        updated_df[LIVE] = merged["IsLiveBool"].fillna(False).map({True: "Yes", False: "No"})
-
         # Calculate savings based on the user's manual selections. The helper
         # returns both the detailed result dataframe and the total dollar value.
-        manual_result_df, manual_total = calculate_scenario_savings(updated_df)
-
-        st.markdown(f"**Current manual selection total savings: ${manual_total:,.0f}**")
-        if target_savings > 0:
-            if manual_total >= target_savings:
-                st.info(
-                    f"Target reached! You exceed the target by ${manual_total - target_savings:,.0f}."
-                )
-            else:
-                st.warning(
-                    f"Still short of target by ${target_savings - manual_total:,.0f}. "
-                    "Consider adjusting selections or running optimizations."
-                )
+        manual_result_df, _ = calculate_manual_results(enforced_pivot, month_columns, df)
 
         st.subheader("UPH Plan Output Format")
         st.dataframe(manual_result_df, use_container_width=True)
@@ -259,15 +267,29 @@ def main() -> None:
             st.warning("Enter a positive target savings above to run optimizations.")
             return
 
-        # Keep a separate calendar in session state for optimization results so
-        # manual edits are not overwritten when running algorithms.
-        if "optimization_calendar" not in st.session_state:
-            st.session_state["optimization_calendar"] = base_pivot_reset
-
         st.subheader("Run Optimizations")
         col1, col2 = st.columns(2)
         run_greedy = col1.button("Run greedy by Dollar Impact", use_container_width=True)
         run_region_grouped = col2.button("Run region-grouped schedule", use_container_width=True)
+
+        if run_greedy:
+            # Greedy algorithm prioritizes later months before turning on the
+            # largest dollar impacts until the target savings is met or exceeded.
+            greedy_df, greedy_total = build_greedy_schedule(df, target_savings)
+            st.session_state["optimization_calendar"], _ = build_calendar_pivot(greedy_df)
+            st.session_state["optimization_result_df"] = greedy_df
+            st.session_state["optimization_result_label"] = "Greedy schedule"
+            st.session_state["optimization_result_total"] = greedy_total
+
+        if run_region_grouped:
+            # Region-grouped algorithm attempts to cluster go-lives within the
+            # same region to limit operational churn while prioritizing later
+            # months first.
+            region_df, region_total = build_region_grouped_schedule(df, target_savings)
+            st.session_state["optimization_calendar"], _ = build_calendar_pivot(region_df)
+            st.session_state["optimization_result_df"] = region_df
+            st.session_state["optimization_result_label"] = "Region-grouped schedule"
+            st.session_state["optimization_result_total"] = region_total
 
         st.subheader("DC Go-Live Calendar")
         st.data_editor(
@@ -281,25 +303,14 @@ def main() -> None:
             key="optimization_dc_month_grid",
         )
 
-        if run_greedy:
-            # Greedy algorithm toggles on the largest dollar impacts first until
-            # the target savings is met or exceeded.
-            greedy_df, greedy_total = build_greedy_schedule(df, target_savings)
-            st.success(f"Greedy schedule total savings: ${greedy_total:,.0f}")
-            st.session_state["optimization_calendar"], _ = build_calendar_pivot(greedy_df)
+        if "optimization_result_df" in st.session_state:
+            result_label = st.session_state.get("optimization_result_label", "Latest optimization")
+            result_total = st.session_state.get("optimization_result_total")
+            if result_total is not None:
+                st.success(f"{result_label} total savings: ${result_total:,.0f}")
 
             st.subheader("UPH Plan Output Format")
-            st.dataframe(greedy_df, use_container_width=True)
-
-        if run_region_grouped:
-            # Region-grouped algorithm attempts to cluster go-lives within the
-            # same region to limit operational churn.
-            region_df, region_total = build_region_grouped_schedule(df, target_savings)
-            st.success(f"Region-grouped schedule total savings: ${region_total:,.0f}")
-            st.session_state["optimization_calendar"], _ = build_calendar_pivot(region_df)
-
-            st.subheader("UPH Plan Output Format")
-            st.dataframe(region_df, use_container_width=True)
+            st.dataframe(st.session_state["optimization_result_df"], use_container_width=True)
 
 
 if __name__ == "__main__":
