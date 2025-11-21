@@ -7,12 +7,13 @@ import pandas as pd
 
 # Column name constants
 REGION = "Region"
-DC_NUMBER = "DC Number"
+DC_ID = "DC ID"
 DC_NAME = "DC Name"
 DC_NUMBER_NAME = "DC Number Name"
 MONTH = "Month"
 PERCENT_COMMITMENT = "%  Commitment"
 DOLLAR_IMPACT = "Dollar Impact"
+CPH_IMPACT = "CPH Impact"
 LIVE = "Live?"
 
 # Fixed go-live windows for specific DCs (DC Name keyed)
@@ -39,22 +40,53 @@ MONTH_ORDER = [
 
 REQUIRED_COLUMNS: Sequence[str] = (
     REGION,
-    DC_NUMBER,
+    DC_ID,
     DC_NAME,
     DC_NUMBER_NAME,
     MONTH,
     PERCENT_COMMITMENT,
     DOLLAR_IMPACT,
+    CPH_IMPACT,
     LIVE,
 )
 
+REQUIRED_INPUT_COLUMNS: Sequence[str] = tuple(
+    column for column in REQUIRED_COLUMNS if column != DC_NUMBER_NAME
+)
 
-def load_inputs(excel_path: str = "data/p4p_template.xlsx") -> pd.DataFrame:
+
+def _format_dc_identifier(value: object) -> str:
+    """Normalize DC IDs read from Excel into clean strings.
+
+    Integers or floats that represent whole numbers are rendered without a decimal to
+    match the prior DC Number format. Any whitespace is stripped, and missing values
+    become an empty string.
+    """
+
+    if pd.isna(value):
+        return ""
+    if isinstance(value, (int, float)) and float(value).is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+def format_dc_number_name(dc_id: object, dc_name: object) -> str:
+    """Concatenate DC ID and name for display in the UI."""
+
+    dc_id_text = _format_dc_identifier(dc_id)
+    dc_name_text = "" if pd.isna(dc_name) else str(dc_name).strip()
+
+    if dc_id_text and dc_name_text:
+        return f"{dc_id_text} - {dc_name_text}"
+    return dc_id_text or dc_name_text
+
+
+def load_inputs(excel_source: object = "data/p4p_template.xlsx") -> pd.DataFrame:
     """
     Load the P4P template from Excel, validate required columns, and return a DataFrame.
 
     Args:
-        excel_path: Path to the P4P Excel template.
+        excel_source: Path or file-like object pointing to the P4P Excel template.
 
     Raises:
         ValueError: If any required columns are missing from the sheet.
@@ -63,11 +95,13 @@ def load_inputs(excel_path: str = "data/p4p_template.xlsx") -> pd.DataFrame:
         DataFrame containing the template data.
     """
 
-    df = pd.read_excel(excel_path, engine="openpyxl")
+    df = pd.read_excel(excel_source, engine="openpyxl")
 
-    missing_columns: List[str] = [col for col in REQUIRED_COLUMNS if col not in df.columns]
+    missing_columns: List[str] = [col for col in REQUIRED_INPUT_COLUMNS if col not in df.columns]
     if missing_columns:
         raise ValueError(f"Missing required columns: {', '.join(missing_columns)}")
+
+    df[DC_NUMBER_NAME] = df.apply(lambda row: format_dc_number_name(row[DC_ID], row[DC_NAME]), axis=1)
 
     return df
 
@@ -175,7 +209,7 @@ def build_greedy_schedule(df: pd.DataFrame, target_savings: float) -> tuple[pd.D
 
     # Prioritize the highest impact buildings so we fill their calendars first.
     dc_priority = (
-        scheduled_df.groupby(DC_NUMBER)[DOLLAR_IMPACT]
+        scheduled_df.groupby(DC_ID)[DOLLAR_IMPACT]
         .sum()
         .sort_values(ascending=False)
         .index
@@ -186,12 +220,12 @@ def build_greedy_schedule(df: pd.DataFrame, target_savings: float) -> tuple[pd.D
         if cumulative_savings >= target_savings:
             break
 
-        dc_rows = scheduled_df[scheduled_df[DC_NUMBER] == dc_number]
+        dc_rows = scheduled_df[scheduled_df[DC_ID] == dc_number]
         for month_order in sorted(dc_rows["_month_order"].unique(), reverse=True):
             if cumulative_savings >= target_savings:
                 break
 
-            dc_mask = scheduled_df[DC_NUMBER] == dc_number
+            dc_mask = scheduled_df[DC_ID] == dc_number
             scheduled_df.loc[
                 dc_mask & (scheduled_df["_month_order"] >= month_order), LIVE
             ] = "Yes"
@@ -317,7 +351,7 @@ def enforce_forward_live_rows(df: pd.DataFrame, preserve_month_order: bool = Fal
     """Force months after a go-live to remain live for each DC.
 
     Args:
-        df: DataFrame containing at least Month, DC Number, and Live? columns.
+        df: DataFrame containing at least Month, DC ID, and Live? columns.
         preserve_month_order: If True, keep an existing ``_month_order`` helper
             column so callers that rely on it for sorting can continue to do so.
 
@@ -336,7 +370,7 @@ def enforce_forward_live_rows(df: pd.DataFrame, preserve_month_order: bool = Fal
     # Iterate through each DC in chronological order to cascade live months
     # forward. Sorting before grouping preserves the month order inside each
     # group iteration.
-    for _, group in enforced_df.sort_values("_month_order").groupby(DC_NUMBER, sort=False):
+    for _, group in enforced_df.sort_values("_month_order").groupby(DC_ID, sort=False):
         live_seen = False
         for idx in group.index:
             live_value = str(enforced_df.at[idx, LIVE]).strip().lower() == "yes"
@@ -355,7 +389,7 @@ def ensure_final_month_live(
     """Guarantee that every DC is live in its latest month and cascade forward.
 
     Args:
-        df: DataFrame containing at least Month, DC Number, and Live? columns.
+        df: DataFrame containing at least Month, DC ID, and Live? columns.
         preserve_month_order: If True, keep an existing ``_month_order`` helper
             column so callers relying on it can continue to do so.
 
@@ -371,7 +405,7 @@ def ensure_final_month_live(
         ensured_df["_month_order"] = ensured_df[MONTH].apply(month_order_value)
         added_month_order = True
 
-    final_month_per_dc = ensured_df.groupby(DC_NUMBER)["_month_order"].transform("max")
+    final_month_per_dc = ensured_df.groupby(DC_ID)["_month_order"].transform("max")
     ensured_df.loc[ensured_df["_month_order"] == final_month_per_dc, LIVE] = "Yes"
 
     ensured_df = enforce_forward_live_rows(ensured_df, preserve_month_order=True)
