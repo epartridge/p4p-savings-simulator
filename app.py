@@ -9,6 +9,8 @@ Extensive comments are included throughout so that developers new to Python or
 Streamlit can understand the intent behind each block of code.
 """
 
+import io
+
 import pandas as pd
 import streamlit as st
 
@@ -19,15 +21,50 @@ from model import (
     MONTH_ORDER,
     LIVE,
     load_inputs,
+    REQUIRED_COLUMNS,
     calculate_scenario_savings,
     build_greedy_schedule,
     build_region_grouped_schedule,
 )
 
 
+TEMPLATE_COLUMNS = list(REQUIRED_COLUMNS)
+
+
 @st.cache_data
-def load_template_df() -> pd.DataFrame:
-    return load_inputs()
+def _load_data_from_source(file_bytes: bytes | None) -> pd.DataFrame:
+    """
+    If file_bytes is None, load the default template from disk.
+    Otherwise, load from the uploaded Excel bytes and validate columns.
+    """
+
+    if file_bytes is None:
+        # default path
+        return load_inputs("data/p4p_template.xlsx")
+
+    df = pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+
+    missing = [c for c in TEMPLATE_COLUMNS if c not in df.columns]
+    if missing:
+        raise ValueError(f"Uploaded file is missing required columns: {missing}")
+
+    return df
+
+
+def make_download_excel(df: pd.DataFrame) -> bytes:
+    """
+    Return Excel bytes for df, restricted to the template columns that actually exist.
+    """
+
+    output_df = df.copy()
+    cols = [c for c in TEMPLATE_COLUMNS if c in output_df.columns]
+    output_df = output_df[cols]
+
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        output_df.to_excel(writer, index=False, sheet_name="P4P")
+    buffer.seek(0)
+    return buffer.getvalue()
 
 
 def normalize_live_bool(series: pd.Series) -> pd.Series:
@@ -176,10 +213,21 @@ def main() -> None:
         "Interactively explore manual and optimized activation schedules to reach your target FY26 savings."
     )
 
+    uploaded_file = st.file_uploader(
+        "Upload P4P template (.xlsx)",
+        type=["xlsx"],
+        help="If empty, the default template from data/p4p_template.xlsx is used.",
+    )
+
     # Load the base dataset that describes each DC, its region, the month value,
     # and whether it is currently live. The dataset is cached by Streamlit to
     # avoid reloading on every interaction.
-    df = load_template_df()
+    if uploaded_file is not None:
+        df = _load_data_from_source(uploaded_file.getvalue())
+        st.success("Using uploaded template.")
+    else:
+        df = _load_data_from_source(None)
+        st.info("Using default template from data/p4p_template.xlsx.")
 
     # Users enter the target savings that optimization routines will try to
     # reach. Keeping ``step`` at a large increment makes entry easier for big
@@ -262,6 +310,14 @@ def main() -> None:
         st.subheader("UPH Plan Output Format")
         st.dataframe(manual_result_df, use_container_width=True)
 
+        excel_bytes = make_download_excel(manual_result_df)
+        st.download_button(
+            label="Download updated template (manual scenario)",
+            data=excel_bytes,
+            file_name="p4p_manual_scenario.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
     with optimizations_tab:
         if target_savings <= 0:
             st.warning("Enter a positive target savings above to run optimizations.")
@@ -280,6 +336,7 @@ def main() -> None:
             st.session_state["optimization_result_df"] = greedy_df
             st.session_state["optimization_result_label"] = "Greedy schedule"
             st.session_state["optimization_result_total"] = greedy_total
+            st.session_state["greedy_result_df"] = greedy_df
 
         if run_region_grouped:
             # Region-grouped algorithm attempts to cluster go-lives within the
@@ -290,6 +347,7 @@ def main() -> None:
             st.session_state["optimization_result_df"] = region_df
             st.session_state["optimization_result_label"] = "Region-grouped schedule"
             st.session_state["optimization_result_total"] = region_total
+            st.session_state["region_grouped_result_df"] = region_df
 
         st.subheader("DC Go-Live Calendar")
         st.data_editor(
@@ -311,6 +369,26 @@ def main() -> None:
 
             st.subheader("UPH Plan Output Format")
             st.dataframe(st.session_state["optimization_result_df"], use_container_width=True)
+
+            greedy_df = st.session_state.get("greedy_result_df")
+            if greedy_df is not None:
+                greedy_bytes = make_download_excel(greedy_df)
+                st.download_button(
+                    label="Download greedy scenario template",
+                    data=greedy_bytes,
+                    file_name="p4p_greedy_scenario.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+
+            grouped_df = st.session_state.get("region_grouped_result_df")
+            if grouped_df is not None:
+                grouped_bytes = make_download_excel(grouped_df)
+                st.download_button(
+                    label="Download region-grouped scenario template",
+                    data=grouped_bytes,
+                    file_name="p4p_region_grouped_scenario.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
 
 
 if __name__ == "__main__":
