@@ -111,7 +111,8 @@ def main() -> None:
         enforced_pivot = enforce_forward_month_selection(edited_pivot, month_columns)
         if not enforced_pivot.equals(st.session_state["manual_pivot_data"]):
             st.session_state["manual_pivot_data"] = enforced_pivot
-            st.experimental_rerun()
+            rerun = getattr(st, "experimental_rerun", None) or getattr(st, "rerun")
+            rerun()
 
         edited_long = enforced_pivot.melt(
             id_vars=[REGION, DC_NUMBER_NAME],
