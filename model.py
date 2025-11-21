@@ -108,7 +108,12 @@ def calculate_scenario_savings(df: pd.DataFrame) -> tuple[pd.DataFrame, float]:
 
 def build_greedy_schedule(df: pd.DataFrame, target_savings: float) -> tuple[pd.DataFrame, float]:
     """
-    Starting from all Live? = 'No', greedily turn rows live prioritizing later months then Dollar Impact.
+    Starting from all Live? = 'No', greedily turn rows live one building at a time.
+
+    Buildings (DCs) are ordered by their total annual impact and, within each
+    building, months are evaluated from latest to earliest. This ensures that if
+    the target is not met with later months, the algorithm keeps pulling earlier
+    months for the same building before moving on.
 
     Args:
         df: Input DataFrame containing at least the Dollar Impact column.
@@ -125,22 +130,31 @@ def build_greedy_schedule(df: pd.DataFrame, target_savings: float) -> tuple[pd.D
     ).fillna(0.0)
     scheduled_df["_month_order"] = scheduled_df[MONTH].apply(month_order_value)
 
+    # Prioritize the highest impact buildings so we fill their calendars first.
+    dc_priority = (
+        scheduled_df.groupby(DC_NUMBER)[DOLLAR_IMPACT]
+        .sum()
+        .sort_values(ascending=False)
+        .index
+    )
+
     cumulative_savings = 0.0
-    for idx in scheduled_df.sort_values(
-        by=["_month_order", DOLLAR_IMPACT], ascending=[False, False]
-    ).index:
+    for dc_number in dc_priority:
         if cumulative_savings >= target_savings:
             break
 
-        # Turn the selected month live and cascade the selection forward for the
-        # same DC so that all later months remain live.
-        selected_dc = scheduled_df.at[idx, DC_NUMBER]
-        month_order = scheduled_df.at[idx, "_month_order"]
-        dc_mask = scheduled_df[DC_NUMBER] == selected_dc
-        scheduled_df.loc[dc_mask & (scheduled_df["_month_order"] >= month_order), LIVE] = "Yes"
+        dc_rows = scheduled_df[scheduled_df[DC_NUMBER] == dc_number]
+        for month_order in sorted(dc_rows["_month_order"].unique(), reverse=True):
+            if cumulative_savings >= target_savings:
+                break
 
-        live_mask = _normalize_live_column(scheduled_df[LIVE]) == "yes"
-        cumulative_savings = float(scheduled_df.loc[live_mask, DOLLAR_IMPACT].sum())
+            dc_mask = scheduled_df[DC_NUMBER] == dc_number
+            scheduled_df.loc[
+                dc_mask & (scheduled_df["_month_order"] >= month_order), LIVE
+            ] = "Yes"
+
+            live_mask = _normalize_live_column(scheduled_df[LIVE]) == "yes"
+            cumulative_savings = float(scheduled_df.loc[live_mask, DOLLAR_IMPACT].sum())
 
     normalized_live = _normalize_live_column(scheduled_df[LIVE])
     scheduled_df["IsLive"] = normalized_live == "yes"
@@ -161,7 +175,9 @@ def build_region_grouped_schedule(df: pd.DataFrame, target_savings: float) -> tu
 
     Regions are activated one month at a time (all buildings within a region for that
     month go live together) starting from later months and then by descending monthly savings
-    until the target is met.
+    until the target is met. If later months do not reach the target, the algorithm keeps
+    walking backward through earlier months for the same region before moving on to the next
+    region.
 
     Args:
         df: Input DataFrame containing at least Region, Month, and Dollar Impact columns.
@@ -185,23 +201,36 @@ def build_region_grouped_schedule(df: pd.DataFrame, target_savings: float) -> tu
     )
     region_month_savings["_month_order"] = region_month_savings[MONTH].apply(month_order_value)
 
+    # Order regions by their total impact so the highest contributors are evaluated first.
+    region_priority = (
+        region_month_savings.groupby(REGION)[DOLLAR_IMPACT]
+        .sum()
+        .sort_values(ascending=False)
+        .index
+    )
+
     cumulative_savings = 0.0
-    for _, row in region_month_savings.sort_values(
-        by=["_month_order", DOLLAR_IMPACT], ascending=[False, False]
-    ).iterrows():
+    for region in region_priority:
         if cumulative_savings >= target_savings:
             break
 
-        region_mask = scheduled_df[REGION] == row[REGION]
-        month_mask = scheduled_df[MONTH] == row[MONTH]
-        scheduled_df.loc[region_mask & month_mask, LIVE] = "Yes"
+        region_rows = region_month_savings[region_month_savings[REGION] == region]
+        for _, row in region_rows.sort_values(
+            by=["_month_order", DOLLAR_IMPACT], ascending=[False, False]
+        ).iterrows():
+            if cumulative_savings >= target_savings:
+                break
 
-        # Enforce that once a DC goes live in a month, it stays live for the
-        # remainder of the year.
-        scheduled_df = enforce_forward_live_rows(scheduled_df, preserve_month_order=True)
+            region_mask = scheduled_df[REGION] == row[REGION]
+            month_mask = scheduled_df[MONTH] == row[MONTH]
+            scheduled_df.loc[region_mask & month_mask, LIVE] = "Yes"
 
-        live_mask = _normalize_live_column(scheduled_df[LIVE]) == "yes"
-        cumulative_savings = float(scheduled_df.loc[live_mask, DOLLAR_IMPACT].sum())
+            # Enforce that once a DC goes live in a month, it stays live for the
+            # remainder of the year.
+            scheduled_df = enforce_forward_live_rows(scheduled_df, preserve_month_order=True)
+
+            live_mask = _normalize_live_column(scheduled_df[LIVE]) == "yes"
+            cumulative_savings = float(scheduled_df.loc[live_mask, DOLLAR_IMPACT].sum())
 
     normalized_live = _normalize_live_column(scheduled_df[LIVE])
     scheduled_df["IsLive"] = normalized_live == "yes"
