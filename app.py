@@ -233,61 +233,63 @@ def main() -> None:
 
     st.set_page_config(layout="wide")
 
-    st.markdown(
-        """
-        <style>
-        /* Tighten top padding and style the toolbar */
-        div.block-container {padding-top: 1.25rem;}
-        .toolbar-badge {
-            display: inline-flex;
-            align-items: center;
-            padding: 0.4rem 0.75rem;
-            border-radius: 999px;
-            font-weight: 600;
-            font-size: 0.9rem;
-            border: 1px solid #b6cff5;
-            background-color: #e7f1fb;
-            color: #084298;
-            white-space: nowrap;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    scenario_bytes = st.session_state.get("scenario_bytes")
 
-    status_col, upload_col, export_col = st.columns(3, gap="small")
+    # --- Compact toolbar above title ---
+    col_status, col_upload, col_download = st.columns([2, 3, 2])
 
-    with upload_col:
-        uploaded_file = st.file_uploader(
-            "Upload custom template",
-            type=["xlsx"],
-            help="If empty, the default template from data/p4p_template.xlsx is used.",
-        )
-        if uploaded_file is not None:
-            st.session_state["uploaded_template"] = uploaded_file
+    # Status pill (non-interactive)
+    with col_status:
+        if "template_filename" not in st.session_state:
+            st.session_state["template_filename"] = "DEFAULT"
+
+        filename = st.session_state["template_filename"]
+        if filename == "DEFAULT":
+            label = "Using default template"
         else:
-            st.session_state.pop("uploaded_template", None)
+            label = f"Using custom template: {filename}"
 
-    active_upload = st.session_state.get("uploaded_template")
-
-    with status_col:
-        status_label = (
-            f"Using custom template: {active_upload.name}"
-            if active_upload is not None
-            else "Using default template"
-        )
-        badge_style = (
-            "background-color: #e6f4ea; border: 1px solid #a3d7a5; color: #0f5132;"
-            if active_upload is not None
-            else ""
-        )
         st.markdown(
-            f"<div class='toolbar-badge' style='{badge_style}'>{status_label}</div>",
+            f"""
+            <div style="
+                display:inline-block;
+                padding:4px 10px;
+                border-radius:12px;
+                background:#e8f0fe;
+                color:#1a3e8a;
+                font-size:13px;
+                font-weight:600;
+            ">{label}</div>
+            """,
             unsafe_allow_html=True,
         )
 
-    with export_col:
-        download_button_slot = st.empty()
+    # File uploader (compact)
+    with col_upload:
+        uploaded = st.file_uploader(
+            "Upload template (.xlsx)",
+            type=["xlsx"],
+            label_visibility="collapsed",
+            key="uploader"
+        )
+        if uploaded is not None:
+            st.session_state["template_filename"] = uploaded.name
+            st.session_state["uploaded_file"] = uploaded
+        else:
+            st.session_state.pop("uploaded_file", None)
+            st.session_state["template_filename"] = "DEFAULT"
+
+    # Download scenario button
+    with col_download:
+        if scenario_bytes is not None:
+            st.download_button(
+                "Download scenario",
+                data=scenario_bytes,
+                file_name="p4p_scenario.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        else:
+            st.button("Download scenario", disabled=True)
 
     st.title("P4P Savings Simulator")
 
@@ -299,9 +301,11 @@ def main() -> None:
     # Load the base dataset that describes each DC, its region, the month value,
     # and whether it is currently live. The dataset is cached by Streamlit to
     # avoid reloading on every interaction.
+    active_upload = st.session_state.get("uploaded_file")
     if active_upload is not None:
         df = _load_data_from_source(active_upload.getvalue())
     else:
+        st.session_state["template_filename"] = "DEFAULT"
         df = _load_data_from_source(None)
 
     # Users enter the target savings that optimization routines will try to
@@ -507,20 +511,8 @@ def main() -> None:
     template_export_df = st.session_state.get("latest_template_df", df)
 
     download_df = latest_manual_result_df or template_export_df
-    download_bytes = make_download_excel(download_df)
-    download_filename = (
-        "p4p_manual_scenario.xlsx"
-        if latest_manual_result_df is not None
-        else "p4p_template_current.xlsx"
-    )
-
-    download_button_slot.download_button(
-        label="Download scenario",
-        data=download_bytes,
-        file_name=download_filename,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-    )
+    scenario_bytes = make_download_excel(download_df)
+    st.session_state["scenario_bytes"] = scenario_bytes
 
 
 if __name__ == "__main__":
