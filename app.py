@@ -20,6 +20,8 @@ from model import (
     LIVE,
     load_inputs,
     calculate_scenario_savings,
+    ensure_final_month_live,
+    apply_dc_live_locks,
     build_greedy_schedule,
     build_region_grouped_schedule,
 )
@@ -27,7 +29,10 @@ from model import (
 
 @st.cache_data
 def load_template_df() -> pd.DataFrame:
-    return load_inputs()
+    base = load_inputs()
+    base = ensure_final_month_live(base)
+    base = apply_dc_live_locks(base)
+    return base
 
 
 def normalize_live_bool(series: pd.Series) -> pd.Series:
@@ -116,6 +121,29 @@ def enforce_forward_month_selection(df: pd.DataFrame, month_columns: list[str]) 
     return enforced_df
 
 
+def apply_schedule_rules(
+    pivot_df: pd.DataFrame, month_columns: list[str], template_df: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Apply forward-fill, final-month, and DC lock rules to pivoted data.
+
+    Returns both the corrected pivot table (with the same column ordering as the
+    incoming pivot) and the reconstructed long-form DataFrame for savings
+    calculations.
+    """
+
+    enforced_pivot = enforce_forward_month_selection(pivot_df, month_columns)
+    updated_df = rebuild_dataset_from_pivot(enforced_pivot, month_columns, template_df)
+    constrained_df = ensure_final_month_live(updated_df)
+    constrained_df = apply_dc_live_locks(constrained_df)
+
+    constrained_pivot, _ = build_calendar_pivot(constrained_df)
+    constrained_pivot = constrained_pivot.reindex(
+        columns=[REGION, DC_NUMBER_NAME] + month_columns, fill_value=False
+    )
+
+    return constrained_pivot, constrained_df
+
+
 def rebuild_dataset_from_pivot(
     pivot_df: pd.DataFrame, month_columns: list[str], template_df: pd.DataFrame
 ) -> pd.DataFrame:
@@ -149,8 +177,8 @@ def calculate_manual_results(
 ) -> tuple[pd.DataFrame, float]:
     """Calculate savings from a pivot table of manual selections."""
 
-    updated_df = rebuild_dataset_from_pivot(pivot_df, month_columns, template_df)
-    return calculate_scenario_savings(updated_df)
+    _, constrained_df = apply_schedule_rules(pivot_df, month_columns, template_df)
+    return calculate_scenario_savings(constrained_df)
 
 
 def align_month_dtype(month_values: pd.Series, template_months: pd.Series) -> pd.Series:
@@ -215,28 +243,37 @@ def main() -> None:
 
     column_order = [REGION, DC_NUMBER_NAME] + month_columns
 
-    # Show current manual savings near the top of the page for quick reference.
-    _, top_manual_total = calculate_manual_results(
-        st.session_state["manual_pivot_data"], month_columns, df
-    )
-    st.markdown(f"**Current manual selection total savings: ${top_manual_total:,.0f}**")
-    if target_savings > 0:
-        if top_manual_total >= target_savings:
-            st.info(
-                f"Target reached! You exceed the target by ${top_manual_total - target_savings:,.0f}."
-            )
-        else:
-            st.warning(
-                f"Still short of target by ${target_savings - top_manual_total:,.0f}. "
-                "Consider adjusting selections or running optimizations."
-            )
-
     manual_tab, optimizations_tab = st.tabs(["Manual selection", "Optimizations"])
 
     with manual_tab:
+        rerun = getattr(st, "experimental_rerun", None) or getattr(st, "rerun")
+
+        constrained_pivot, constrained_df = apply_schedule_rules(
+            st.session_state["manual_pivot_data"], month_columns, df
+        )
+        if not constrained_pivot.equals(st.session_state["manual_pivot_data"]):
+            st.session_state["manual_pivot_data"] = constrained_pivot
+            rerun()
+
+        manual_result_df, top_manual_total = calculate_scenario_savings(constrained_df)
+        # Show current manual savings near the top of the tab for quick reference.
+        st.markdown(
+            f"**Current manual selection total savings: ${top_manual_total:,.0f}**"
+        )
+        if target_savings > 0:
+            if top_manual_total >= target_savings:
+                st.info(
+                    f"Target reached! You exceed the target by ${top_manual_total - target_savings:,.0f}."
+                )
+            else:
+                st.warning(
+                    f"Still short of target by ${target_savings - top_manual_total:,.0f}. "
+                    "Consider adjusting selections or running optimizations."
+                )
+
         st.subheader("DC Go-Live Calendar")
         edited_pivot = st.data_editor(
-            st.session_state["manual_pivot_data"],
+            constrained_pivot,
             use_container_width=True,
             num_rows="fixed",
             column_config=column_config,
@@ -245,19 +282,14 @@ def main() -> None:
             key="manual_pivot_editor",
         )
 
-        # Apply the forward-fill rule so that once a DC goes live it stays live
-        # in subsequent months. If the enforcement changes any values, store the
-        # corrected data and trigger a rerun to refresh the UI with the new
-        # state.
-        enforced_pivot = enforce_forward_month_selection(edited_pivot, month_columns)
-        if not enforced_pivot.equals(st.session_state["manual_pivot_data"]):
-            st.session_state["manual_pivot_data"] = enforced_pivot
-            rerun = getattr(st, "experimental_rerun", None) or getattr(st, "rerun")
+        corrected_pivot, corrected_df = apply_schedule_rules(
+            edited_pivot, month_columns, df
+        )
+        if not corrected_pivot.equals(st.session_state["manual_pivot_data"]):
+            st.session_state["manual_pivot_data"] = corrected_pivot
             rerun()
 
-        # Calculate savings based on the user's manual selections. The helper
-        # returns both the detailed result dataframe and the total dollar value.
-        manual_result_df, _ = calculate_manual_results(enforced_pivot, month_columns, df)
+        manual_result_df, _ = calculate_scenario_savings(corrected_df)
 
         st.subheader("UPH Plan Output Format")
         st.dataframe(manual_result_df, use_container_width=True)
@@ -267,7 +299,7 @@ def main() -> None:
             st.warning("Enter a positive target savings above to run optimizations.")
             return
 
-        st.subheader("Run Optimizations")
+            st.subheader("Run Optimizations")
         col1, col2 = st.columns(2)
         run_greedy = col1.button("Run greedy by Dollar Impact", use_container_width=True)
         run_region_grouped = col2.button("Run region-grouped schedule", use_container_width=True)
@@ -275,7 +307,8 @@ def main() -> None:
         if run_greedy:
             # Greedy algorithm prioritizes later months before turning on the
             # largest dollar impacts until the target savings is met or exceeded.
-            greedy_df, greedy_total = build_greedy_schedule(df, target_savings)
+            greedy_df, _ = build_greedy_schedule(df, target_savings)
+            _, greedy_total = calculate_scenario_savings(greedy_df)
             st.session_state["optimization_calendar"], _ = build_calendar_pivot(greedy_df)
             st.session_state["optimization_result_df"] = greedy_df
             st.session_state["optimization_result_label"] = "Greedy schedule"
@@ -285,11 +318,25 @@ def main() -> None:
             # Region-grouped algorithm attempts to cluster go-lives within the
             # same region to limit operational churn while prioritizing later
             # months first.
-            region_df, region_total = build_region_grouped_schedule(df, target_savings)
+            region_df, _ = build_region_grouped_schedule(df, target_savings)
+            _, region_total = calculate_scenario_savings(region_df)
             st.session_state["optimization_calendar"], _ = build_calendar_pivot(region_df)
             st.session_state["optimization_result_df"] = region_df
             st.session_state["optimization_result_label"] = "Region-grouped schedule"
             st.session_state["optimization_result_total"] = region_total
+
+        if "optimization_calendar" in st.session_state:
+            optimization_calendar, optimization_df = apply_schedule_rules(
+                st.session_state["optimization_calendar"], month_columns, df
+            )
+            if not optimization_calendar.equals(st.session_state["optimization_calendar"]):
+                st.session_state["optimization_calendar"] = optimization_calendar
+            st.session_state["optimization_result_df"] = optimization_df
+            _, optimization_calendar_total = calculate_scenario_savings(optimization_df)
+            st.session_state["optimization_result_total"] = optimization_calendar_total
+            st.markdown(
+                f"**Current optimization calendar total savings: ${optimization_calendar_total:,.0f}**"
+            )
 
         st.subheader("DC Go-Live Calendar")
         st.data_editor(
