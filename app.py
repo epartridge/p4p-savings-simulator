@@ -329,23 +329,24 @@ def main() -> None:
         st.session_state["template_filename"] = "DEFAULT"
         df = _load_data_from_source(None)
 
-    # Users enter the target savings that optimization routines will try to
-    # reach. Keeping ``step`` at a large increment makes entry easier for big
-    # numbers.
-    label_col, input_col = st.columns([1.6, 1], gap="small")
-    with label_col:
-        st.markdown(
-            "<div style='white-space: nowrap; font-weight:600; margin-bottom:0.25rem;'>Target FY26 savings ($):</div>",
-            unsafe_allow_html=True,
-        )
-    with input_col:
+    col_target, col_max_initial = st.columns([2, 2])
+
+    with col_target:
         target_savings = st.number_input(
-            "Target FY26 savings ($)",
-            min_value=0.0,
-            value=0.0,
-            step=100000.0,
-            format="%.0f",
-            label_visibility="collapsed",
+            "Target FY26 savings ($):",
+            min_value=0,
+            step=100000,
+            value=5_000_000,
+            format="%i",
+        )
+
+    with col_max_initial:
+        max_initial_golives_per_month = st.number_input(
+            "Max DCs going live in their first month:",
+            min_value=1,
+            max_value=50,
+            step=1,
+            value=4,
         )
 
     # Build a pivoted version of the dataset that Streamlit can display as a
@@ -454,7 +455,11 @@ def main() -> None:
         if run_greedy:
             # Greedy algorithm prioritizes later months before turning on the
             # largest dollar impacts until the target savings is met or exceeded.
-            greedy_df, _ = build_greedy_schedule(df, target_savings)
+            greedy_df, _ = build_greedy_schedule(
+                df,
+                target_savings,
+                max_initial_golives_per_month=int(max_initial_golives_per_month),
+            )
             _, greedy_total = calculate_scenario_savings(greedy_df)
             st.session_state["optimization_calendar"], _ = build_calendar_pivot(greedy_df)
             st.session_state["optimization_result_df"] = greedy_df
@@ -466,7 +471,11 @@ def main() -> None:
             # Region-grouped algorithm attempts to cluster go-lives within the
             # same region to limit operational churn while prioritizing later
             # months first.
-            region_df, _ = build_region_grouped_schedule(df, target_savings)
+            region_df, _ = build_region_grouped_schedule(
+                df,
+                target_savings,
+                max_initial_golives_per_month=int(max_initial_golives_per_month),
+            )
             _, region_total = calculate_scenario_savings(region_df)
             st.session_state["optimization_calendar"], _ = build_calendar_pivot(region_df)
             st.session_state["optimization_result_df"] = region_df
