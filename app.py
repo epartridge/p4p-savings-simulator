@@ -233,48 +233,38 @@ def main() -> None:
 
     st.set_page_config(layout="wide")
 
-    _spacer, status_col, upload_col, export_col = st.columns(
-        [3, 2, 2.4, 2.4], gap="small"
-    )
-
-    status_box = status_col.container(border=True, height=150)
-    upload_box = upload_col.container(border=True, height=150)
-    export_box = export_col.container(border=True, height=150)
-
-    title_row, _ = st.columns([3, 1], gap="small")
-    with title_row:
-        st.title("P4P Savings Simulator")
-
-    with status_box:
-        st.markdown("**Template source**")
-        status_slot = st.empty()
-
-    with upload_box:
-        st.markdown("**Import template**")
-        uploader_slot = st.empty()
-
-    with export_box:
-        st.markdown("**Export**")
-        uph_export_slot = st.empty()
-        template_export_slot = st.empty()
-        manual_download_slot = st.empty()
-
-    st.markdown(
-        "Interactively explore manual and optimized activation schedules to reach your target FY26 savings.",
-        help=None,
-    )
-
     st.markdown(
         """
         <style>
-        /* Swap the default drag-and-drop text for a clearer upload label */
-        div[data-testid="stFileUploadDropzone"] > div:first-child > span:first-child {
-            display: none;
+        /* Tighten top padding and style the toolbar */
+        div.block-container {padding-top: 1.25rem;}
+        .toolbar-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.4rem 0.75rem;
+            border-radius: 999px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            border: 1px solid #b6cff5;
+            background-color: #e7f1fb;
+            color: #084298;
+            white-space: nowrap;
         }
+        div[data-testid="stFileUploadDropzone"] {
+            border: 1px solid #cdd0d4;
+            border-radius: 6px;
+            padding: 0.35rem 0.75rem;
+            min-height: 0;
+            background-color: #f8fafc;
+        }
+        div[data-testid="stFileUploadDropzone"] > div:first-child {
+            justify-content: center;
+            padding: 0;
+            margin: 0;
+        }
+        div[data-testid="stFileUploadDropzone"] > div:first-child > span:first-child {display: none;}
         div[data-testid="stFileUploadDropzone"] > div:first-child::before {
-            content: "Upload P4P template (.xlsx)";
-            display: block;
-            text-align: center;
+            content: "Upload template";
             font-weight: 600;
             color: inherit;
         }
@@ -283,11 +273,42 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    uploaded_file = uploader_slot.file_uploader(
-        "Upload P4P template (.xlsx)",
-        type=["xlsx"],
-        label_visibility="collapsed",
-        help="If empty, the default template from data/p4p_template.xlsx is used.",
+    status_col, upload_col, export_col = st.columns([1, 1, 1], gap="small")
+
+    with upload_col:
+        uploaded_file = st.file_uploader(
+            "Upload template",
+            type=["xlsx"],
+            label_visibility="collapsed",
+            help="If empty, the default template from data/p4p_template.xlsx is used.",
+        )
+
+    with status_col:
+        status_label = (
+            f"Using custom template: {uploaded_file.name}"
+            if uploaded_file is not None
+            else "Using default template"
+        )
+        badge_style = (
+            "background-color: #e6f4ea; border: 1px solid #a3d7a5; color: #0f5132;"
+            if uploaded_file is not None
+            else ""
+        )
+        st.markdown(
+            f"<div class='toolbar-badge' style='{badge_style}'>{status_label}</div>",
+            unsafe_allow_html=True,
+        )
+
+    with export_col:
+        download_button_slot = st.empty()
+
+    title_row, _ = st.columns([3, 1], gap="small")
+    with title_row:
+        st.title("P4P Savings Simulator")
+
+    st.markdown(
+        "Interactively explore manual and optimized activation schedules to reach your target FY26 savings.",
+        help=None,
     )
 
     # Load the base dataset that describes each DC, its region, the month value,
@@ -295,28 +316,8 @@ def main() -> None:
     # avoid reloading on every interaction.
     if uploaded_file is not None:
         df = _load_data_from_source(uploaded_file.getvalue())
-        status_slot.markdown(
-            "<div style='display:flex; justify-content:flex-start; margin-bottom:0.25rem;'>"
-            "<div style='display:inline-flex; align-items:center; padding:0.5rem 0.75rem; "
-            "border-radius:10px; background-color:#e6f4ea; color:#0f5132; "
-            "border:1px solid #a3d7a5; font-weight:600;'>"
-            "Using uploaded template"
-            "</div>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
     else:
         df = _load_data_from_source(None)
-        status_slot.markdown(
-            "<div style='display:flex; justify-content:flex-start; margin-bottom:0.25rem;'>"
-            "<div style='display:inline-flex; align-items:center; padding:0.5rem 0.75rem; "
-            "border-radius:10px; background-color:#e7f1fb; color:#084298; "
-            "border:1px solid #b6cff5; font-weight:600;'>"
-            "Using default template"
-            "</div>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
 
     # Users enter the target savings that optimization routines will try to
     # reach. Keeping ``step`` at a large increment makes entry easier for big
@@ -519,29 +520,22 @@ def main() -> None:
 
     latest_manual_result_df = st.session_state.get("latest_manual_result_df")
     template_export_df = st.session_state.get("latest_template_df", df)
-    template_export_bytes = make_download_excel(template_export_df)
-    if latest_manual_result_df is not None:
-        uph_plan_bytes = make_download_excel(latest_manual_result_df)
-        uph_export_slot.download_button(
-            label="Export UPH Plan Output (.xlsx)",
-            data=uph_plan_bytes,
-            file_name="p4p_uph_plan_output.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-    template_export_slot.download_button(
-        label="Export current template data (.xlsx)",
-        data=template_export_bytes,
-        file_name="p4p_template_current.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+
+    download_df = latest_manual_result_df or template_export_df
+    download_bytes = make_download_excel(download_df)
+    download_filename = (
+        "p4p_manual_scenario.xlsx"
+        if latest_manual_result_df is not None
+        else "p4p_template_current.xlsx"
     )
-    if latest_manual_result_df is not None:
-        latest_manual_bytes = make_download_excel(latest_manual_result_df)
-        manual_download_slot.download_button(
-            label="Download current manual scenario",
-            data=latest_manual_bytes,
-            file_name="p4p_manual_scenario.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
+
+    download_button_slot.download_button(
+        label="Download scenario",
+        data=download_bytes,
+        file_name=download_filename,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
 
 
 if __name__ == "__main__":
