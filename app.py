@@ -44,13 +44,7 @@ def _load_data_from_source(file_bytes: bytes | None) -> pd.DataFrame:
         # default path
         return load_inputs("data/p4p_template.xlsx")
 
-    df = pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
-
-    missing = [c for c in TEMPLATE_COLUMNS if c not in df.columns]
-    if missing:
-        raise ValueError(f"Uploaded file is missing required columns: {missing}")
-
-    return df
+    return load_inputs(io.BytesIO(file_bytes))
 
 
 def make_download_excel(df: pd.DataFrame) -> bytes:
