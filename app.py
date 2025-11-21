@@ -238,15 +238,31 @@ def main() -> None:
     """Render the Streamlit UI and orchestrate user interactions."""
 
     st.set_page_config(layout="wide")
-    st.title("P4P Savings Simulator")
-    st.write(
-        "Interactively explore manual and optimized activation schedules to reach your target FY26 savings."
-    )
 
-    uploaded_file = st.file_uploader(
+    header_left, header_right = st.columns([3, 2])
+    with header_left:
+        st.title("P4P Savings Simulator")
+
+    with header_right:
+        label_row_left, label_row_right = st.columns([1, 1])
+        with label_row_left:
+            st.markdown("**Upload P4P template (.xlsx)**")
+        status_slot = label_row_right.empty()
+
+        action_row_left, action_row_right = st.columns([1.2, 1])
+        uploader_slot = action_row_left.empty()
+        template_export_slot = action_row_right.empty()
+        manual_download_slot = action_row_right.empty()
+
+    uploaded_file = uploader_slot.file_uploader(
         "Upload P4P template (.xlsx)",
         type=["xlsx"],
+        label_visibility="collapsed",
         help="If empty, the default template from data/p4p_template.xlsx is used.",
+    )
+
+    st.write(
+        "Interactively explore manual and optimized activation schedules to reach your target FY26 savings."
     )
 
     # Load the base dataset that describes each DC, its region, the month value,
@@ -254,10 +270,10 @@ def main() -> None:
     # avoid reloading on every interaction.
     if uploaded_file is not None:
         df = _load_data_from_source(uploaded_file.getvalue())
-        st.success("Using uploaded template.")
+        status_slot.success("Using uploaded template.")
     else:
         df = _load_data_from_source(None)
-        st.info("Using default template from data/p4p_template.xlsx.")
+        status_slot.info("Using default template from data/p4p_template.xlsx.")
 
     # Users enter the target savings that optimization routines will try to
     # reach. Keeping ``step`` at a large increment makes entry easier for big
@@ -277,6 +293,10 @@ def main() -> None:
         st.session_state["manual_pivot_data"] = base_pivot_reset
     if "optimization_calendar" not in st.session_state:
         st.session_state["optimization_calendar"] = base_pivot_reset
+    if "latest_manual_result_df" not in st.session_state:
+        st.session_state["latest_manual_result_df"] = None
+    if "latest_template_df" not in st.session_state:
+        st.session_state["latest_template_df"] = df
 
     # Configure how each column appears inside the data editor. Region and DC
     # identifiers are read-only text, while the month columns become checkbox
@@ -340,6 +360,9 @@ def main() -> None:
             rerun()
 
         manual_result_df, _ = calculate_scenario_savings(corrected_df)
+
+        st.session_state["latest_manual_result_df"] = manual_result_df
+        st.session_state["latest_template_df"] = corrected_df
 
         st.subheader("UPH Plan Output Format")
         st.dataframe(manual_result_df, use_container_width=True)
@@ -438,6 +461,24 @@ def main() -> None:
                     file_name="p4p_region_grouped_scenario.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
+
+    latest_manual_result_df = st.session_state.get("latest_manual_result_df")
+    template_export_df = st.session_state.get("latest_template_df", df)
+    template_export_bytes = make_download_excel(template_export_df)
+    template_export_slot.download_button(
+        label="Export current template data (.xlsx)",
+        data=template_export_bytes,
+        file_name="p4p_template_current.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    if latest_manual_result_df is not None:
+        latest_manual_bytes = make_download_excel(latest_manual_result_df)
+        manual_download_slot.download_button(
+            label="Download current manual scenario",
+            data=latest_manual_bytes,
+            file_name="p4p_manual_scenario.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
 
 if __name__ == "__main__":
