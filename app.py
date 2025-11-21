@@ -215,25 +215,27 @@ def main() -> None:
 
     column_order = [REGION, DC_NUMBER_NAME] + month_columns
 
-    # Show current manual savings near the top of the page for quick reference.
-    _, top_manual_total = calculate_manual_results(
-        st.session_state["manual_pivot_data"], month_columns, df
-    )
-    st.markdown(f"**Current manual selection total savings: ${top_manual_total:,.0f}**")
-    if target_savings > 0:
-        if top_manual_total >= target_savings:
-            st.info(
-                f"Target reached! You exceed the target by ${top_manual_total - target_savings:,.0f}."
-            )
-        else:
-            st.warning(
-                f"Still short of target by ${target_savings - top_manual_total:,.0f}. "
-                "Consider adjusting selections or running optimizations."
-            )
-
     manual_tab, optimizations_tab = st.tabs(["Manual selection", "Optimizations"])
 
     with manual_tab:
+        # Show current manual savings near the top of the tab for quick reference.
+        _, top_manual_total = calculate_manual_results(
+            st.session_state["manual_pivot_data"], month_columns, df
+        )
+        st.markdown(
+            f"**Current manual selection total savings: ${top_manual_total:,.0f}**"
+        )
+        if target_savings > 0:
+            if top_manual_total >= target_savings:
+                st.info(
+                    f"Target reached! You exceed the target by ${top_manual_total - target_savings:,.0f}."
+                )
+            else:
+                st.warning(
+                    f"Still short of target by ${target_savings - top_manual_total:,.0f}. "
+                    "Consider adjusting selections or running optimizations."
+                )
+
         st.subheader("DC Go-Live Calendar")
         edited_pivot = st.data_editor(
             st.session_state["manual_pivot_data"],
@@ -267,7 +269,7 @@ def main() -> None:
             st.warning("Enter a positive target savings above to run optimizations.")
             return
 
-        st.subheader("Run Optimizations")
+            st.subheader("Run Optimizations")
         col1, col2 = st.columns(2)
         run_greedy = col1.button("Run greedy by Dollar Impact", use_container_width=True)
         run_region_grouped = col2.button("Run region-grouped schedule", use_container_width=True)
@@ -275,7 +277,8 @@ def main() -> None:
         if run_greedy:
             # Greedy algorithm prioritizes later months before turning on the
             # largest dollar impacts until the target savings is met or exceeded.
-            greedy_df, greedy_total = build_greedy_schedule(df, target_savings)
+            greedy_df, _ = build_greedy_schedule(df, target_savings)
+            _, greedy_total = calculate_scenario_savings(greedy_df)
             st.session_state["optimization_calendar"], _ = build_calendar_pivot(greedy_df)
             st.session_state["optimization_result_df"] = greedy_df
             st.session_state["optimization_result_label"] = "Greedy schedule"
@@ -285,11 +288,20 @@ def main() -> None:
             # Region-grouped algorithm attempts to cluster go-lives within the
             # same region to limit operational churn while prioritizing later
             # months first.
-            region_df, region_total = build_region_grouped_schedule(df, target_savings)
+            region_df, _ = build_region_grouped_schedule(df, target_savings)
+            _, region_total = calculate_scenario_savings(region_df)
             st.session_state["optimization_calendar"], _ = build_calendar_pivot(region_df)
             st.session_state["optimization_result_df"] = region_df
             st.session_state["optimization_result_label"] = "Region-grouped schedule"
             st.session_state["optimization_result_total"] = region_total
+
+        if "optimization_calendar" in st.session_state:
+            _, optimization_calendar_total = calculate_manual_results(
+                st.session_state["optimization_calendar"], month_columns, df
+            )
+            st.markdown(
+                f"**Current optimization calendar total savings: ${optimization_calendar_total:,.0f}**"
+            )
 
         st.subheader("DC Go-Live Calendar")
         st.data_editor(
