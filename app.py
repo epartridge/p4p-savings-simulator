@@ -250,48 +250,37 @@ def main() -> None:
             color: #084298;
             white-space: nowrap;
         }
-        div[data-testid="stFileUploadDropzone"] {
-            border: 1px solid #cdd0d4;
-            border-radius: 6px;
-            padding: 0.35rem 0.75rem;
-            min-height: 0;
-            background-color: #f8fafc;
-        }
-        div[data-testid="stFileUploadDropzone"] > div:first-child {
-            justify-content: center;
-            padding: 0;
-            margin: 0;
-        }
-        div[data-testid="stFileUploadDropzone"] > div:first-child > span:first-child {display: none;}
-        div[data-testid="stFileUploadDropzone"] > div:first-child::before {
-            content: "Upload template";
-            font-weight: 600;
-            color: inherit;
-        }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    status_col, upload_col, export_col = st.columns([1, 1, 1], gap="small")
+    st.title("P4P Savings Simulator")
+
+    status_col, upload_col, export_col = st.columns(3, gap="small")
 
     with upload_col:
         uploaded_file = st.file_uploader(
-            "Upload template",
+            "Upload custom template",
             type=["xlsx"],
-            label_visibility="collapsed",
             help="If empty, the default template from data/p4p_template.xlsx is used.",
         )
+        if uploaded_file is not None:
+            st.session_state["uploaded_template"] = uploaded_file
+        else:
+            st.session_state.pop("uploaded_template", None)
+
+    active_upload = st.session_state.get("uploaded_template")
 
     with status_col:
         status_label = (
-            f"Using custom template: {uploaded_file.name}"
-            if uploaded_file is not None
+            f"Using custom template: {active_upload.name}"
+            if active_upload is not None
             else "Using default template"
         )
         badge_style = (
             "background-color: #e6f4ea; border: 1px solid #a3d7a5; color: #0f5132;"
-            if uploaded_file is not None
+            if active_upload is not None
             else ""
         )
         st.markdown(
@@ -302,10 +291,6 @@ def main() -> None:
     with export_col:
         download_button_slot = st.empty()
 
-    title_row, _ = st.columns([3, 1], gap="small")
-    with title_row:
-        st.title("P4P Savings Simulator")
-
     st.markdown(
         "Interactively explore manual and optimized activation schedules to reach your target FY26 savings.",
         help=None,
@@ -314,8 +299,8 @@ def main() -> None:
     # Load the base dataset that describes each DC, its region, the month value,
     # and whether it is currently live. The dataset is cached by Streamlit to
     # avoid reloading on every interaction.
-    if uploaded_file is not None:
-        df = _load_data_from_source(uploaded_file.getvalue())
+    if active_upload is not None:
+        df = _load_data_from_source(active_upload.getvalue())
     else:
         df = _load_data_from_source(None)
 
