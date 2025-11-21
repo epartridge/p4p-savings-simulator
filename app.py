@@ -53,6 +53,7 @@ def align_month_dtype(month_values: pd.Series, template_months: pd.Series) -> pd
 
 
 def main() -> None:
+    st.set_page_config(layout="wide")
     st.title("P4P Savings Simulator")
     st.write(
         "Interactively explore manual and optimized activation schedules to reach your target FY26 savings."
@@ -108,7 +109,9 @@ def main() -> None:
         )
 
         enforced_pivot = enforce_forward_month_selection(edited_pivot, month_columns)
-        st.session_state["manual_pivot_data"] = enforced_pivot
+        if not enforced_pivot.equals(st.session_state["manual_pivot_data"]):
+            st.session_state["manual_pivot_data"] = enforced_pivot
+            st.experimental_rerun()
 
         edited_long = enforced_pivot.melt(
             id_vars=[REGION, DC_NUMBER_NAME],
