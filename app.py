@@ -244,22 +244,37 @@ def main() -> None:
         st.title("P4P Savings Simulator")
 
     with header_right:
-        spacer, upload_column = st.columns([0.6, 1])
-        with upload_column:
-            st.markdown(
-                "<div style='text-align:right; font-weight:600;'>Upload P4P template (.xlsx)</div>",
-                unsafe_allow_html=True,
-            )
-            uploader_slot = st.empty()
-            status_slot = st.empty()
-
-        with spacer:
+        download_column, upload_column = st.columns([0.9, 2], gap="small")
+        with download_column:
             template_export_slot = st.empty()
             manual_download_slot = st.empty()
+
+        with upload_column:
+            status_slot = st.empty()
+            uploader_slot = st.empty()
 
     st.markdown(
         "Interactively explore manual and optimized activation schedules to reach your target FY26 savings.",
         help=None,
+    )
+
+    st.markdown(
+        """
+        <style>
+        /* Swap the default drag-and-drop text for a clearer upload label */
+        div[data-testid="stFileUploadDropzone"] > div:first-child > span:first-child {
+            display: none;
+        }
+        div[data-testid="stFileUploadDropzone"] > div:first-child::before {
+            content: "Upload P4P template (.xlsx)";
+            display: block;
+            text-align: center;
+            font-weight: 600;
+            color: inherit;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
 
     uploaded_file = uploader_slot.file_uploader(
@@ -275,7 +290,7 @@ def main() -> None:
     if uploaded_file is not None:
         df = _load_data_from_source(uploaded_file.getvalue())
         status_slot.markdown(
-            "<div style='display:flex; justify-content:flex-end;'>"
+            "<div style='display:flex; justify-content:flex-start; margin-bottom:0.25rem;'>"
             "<div style='display:inline-flex; align-items:center; padding:0.5rem 0.75rem; "
             "border-radius:10px; background-color:#e6f4ea; color:#0f5132; "
             "border:1px solid #a3d7a5; font-weight:600;'>"
@@ -287,7 +302,7 @@ def main() -> None:
     else:
         df = _load_data_from_source(None)
         status_slot.markdown(
-            "<div style='display:flex; justify-content:flex-end;'>"
+            "<div style='display:flex; justify-content:flex-start; margin-bottom:0.25rem;'>"
             "<div style='display:inline-flex; align-items:center; padding:0.5rem 0.75rem; "
             "border-radius:10px; background-color:#e7f1fb; color:#084298; "
             "border:1px solid #b6cff5; font-weight:600;'>"
@@ -300,7 +315,7 @@ def main() -> None:
     # Users enter the target savings that optimization routines will try to
     # reach. Keeping ``step`` at a large increment makes entry easier for big
     # numbers.
-    label_col, input_col, _ = st.columns([3, 2, 5])
+    label_col, input_col = st.columns([3, 2], gap="small")
     with label_col:
         st.markdown(
             "<div style='white-space: nowrap; font-weight:600;'>Target FY26 savings ($):</div>",
