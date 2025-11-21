@@ -255,8 +255,6 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    st.title("P4P Savings Simulator")
-
     status_col, upload_col, export_col = st.columns(3, gap="small")
 
     with upload_col:
@@ -290,6 +288,8 @@ def main() -> None:
 
     with export_col:
         download_button_slot = st.empty()
+
+    st.title("P4P Savings Simulator")
 
     st.markdown(
         "Interactively explore manual and optimized activation schedules to reach your target FY26 savings.",
