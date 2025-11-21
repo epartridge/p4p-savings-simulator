@@ -15,6 +15,12 @@ PERCENT_COMMITMENT = "%  Commitment"
 DOLLAR_IMPACT = "Dollar Impact"
 LIVE = "Live?"
 
+# Fixed go-live windows for specific DCs (DC Name keyed)
+DC_LIVE_LOCKS = {
+    "Houston": {"Feb", "Mar", "Apr", "May", "Jun", "Jul"},
+    "Winchester": {"Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct"},
+}
+
 # Month ordering where Jan is treated as month 12 (after Dec)
 MONTH_ORDER = [
     "Feb",
@@ -106,6 +112,40 @@ def calculate_scenario_savings(df: pd.DataFrame) -> tuple[pd.DataFrame, float]:
     return df_copy, total_savings
 
 
+def apply_dc_live_locks(df: pd.DataFrame, preserve_month_order: bool = False) -> pd.DataFrame:
+    """Apply fixed go-live rules for DCs that have locked schedules.
+
+    Args:
+        df: DataFrame containing at least DC Name, Month, and Live? columns.
+        preserve_month_order: If True, retain any existing ``_month_order`` helper
+            column created inside the function.
+
+    Returns:
+        A DataFrame with Live? values forced according to ``DC_LIVE_LOCKS`` and
+        all other rows left untouched.
+    """
+
+    locked_df = df.copy()
+    added_month_order = False
+
+    if "_month_order" not in locked_df.columns:
+        locked_df["_month_order"] = locked_df[MONTH].apply(month_order_value)
+        added_month_order = True
+
+    for dc_name, allowed_live_months in DC_LIVE_LOCKS.items():
+        dc_mask = locked_df[DC_NAME] == dc_name
+        if not dc_mask.any():
+            continue
+
+        locked_df.loc[dc_mask, LIVE] = "No"
+        locked_df.loc[dc_mask & locked_df[MONTH].isin(allowed_live_months), LIVE] = "Yes"
+
+    if added_month_order and not preserve_month_order:
+        locked_df = locked_df.drop(columns=["_month_order"], errors="ignore")
+
+    return locked_df
+
+
 def build_greedy_schedule(df: pd.DataFrame, target_savings: float) -> tuple[pd.DataFrame, float]:
     """
     Starting from all Live? = 'No', greedily turn rows live one building at a time.
@@ -130,6 +170,9 @@ def build_greedy_schedule(df: pd.DataFrame, target_savings: float) -> tuple[pd.D
     ).fillna(0.0)
     scheduled_df["_month_order"] = scheduled_df[MONTH].apply(month_order_value)
 
+    # Apply any DC-specific live locks up front
+    scheduled_df = apply_dc_live_locks(scheduled_df, preserve_month_order=True)
+
     # Prioritize the highest impact buildings so we fill their calendars first.
     dc_priority = (
         scheduled_df.groupby(DC_NUMBER)[DOLLAR_IMPACT]
@@ -153,8 +196,19 @@ def build_greedy_schedule(df: pd.DataFrame, target_savings: float) -> tuple[pd.D
                 dc_mask & (scheduled_df["_month_order"] >= month_order), LIVE
             ] = "Yes"
 
+            # Re-apply DC live locks after each change
+            scheduled_df = apply_dc_live_locks(
+                scheduled_df, preserve_month_order=True
+            )
+
             live_mask = _normalize_live_column(scheduled_df[LIVE]) == "yes"
-            cumulative_savings = float(scheduled_df.loc[live_mask, DOLLAR_IMPACT].sum())
+            cumulative_savings = float(
+                scheduled_df.loc[live_mask, DOLLAR_IMPACT].sum()
+            )
+
+    # Ensure each DC is live in its final month and cascade forward, then re-lock
+    scheduled_df = ensure_final_month_live(scheduled_df, preserve_month_order=True)
+    scheduled_df = apply_dc_live_locks(scheduled_df, preserve_month_order=True)
 
     normalized_live = _normalize_live_column(scheduled_df[LIVE])
     scheduled_df["IsLive"] = normalized_live == "yes"
@@ -167,6 +221,7 @@ def build_greedy_schedule(df: pd.DataFrame, target_savings: float) -> tuple[pd.D
     scheduled_df = scheduled_df.drop(columns=["_month_order"], errors="ignore")
 
     return scheduled_df, cumulative_savings
+
 
 
 def build_region_grouped_schedule(df: pd.DataFrame, target_savings: float) -> tuple[pd.DataFrame, float]:
@@ -199,7 +254,9 @@ def build_region_grouped_schedule(df: pd.DataFrame, target_savings: float) -> tu
         .sum()
         .reset_index()
     )
-    region_month_savings["_month_order"] = region_month_savings[MONTH].apply(month_order_value)
+    region_month_savings["_month_order"] = region_month_savings[MONTH].apply(
+        month_order_value
+    )
 
     # Order regions by their total impact so the highest contributors are evaluated first.
     region_priority = (
@@ -225,12 +282,23 @@ def build_region_grouped_schedule(df: pd.DataFrame, target_savings: float) -> tu
             month_mask = scheduled_df[MONTH] == row[MONTH]
             scheduled_df.loc[region_mask & month_mask, LIVE] = "Yes"
 
-            # Enforce that once a DC goes live in a month, it stays live for the
-            # remainder of the year.
-            scheduled_df = enforce_forward_live_rows(scheduled_df, preserve_month_order=True)
+            # Enforce that once a DC goes live in a month, it stays live for the remainder of the year.
+            scheduled_df = enforce_forward_live_rows(
+                scheduled_df, preserve_month_order=True
+            )
+            # Apply DC-specific live locks on top
+            scheduled_df = apply_dc_live_locks(
+                scheduled_df, preserve_month_order=True
+            )
 
             live_mask = _normalize_live_column(scheduled_df[LIVE]) == "yes"
-            cumulative_savings = float(scheduled_df.loc[live_mask, DOLLAR_IMPACT].sum())
+            cumulative_savings = float(
+                scheduled_df.loc[live_mask, DOLLAR_IMPACT].sum()
+            )
+
+    # Ensure each DC is live in its final month and cascade forward, then re-lock
+    scheduled_df = ensure_final_month_live(scheduled_df, preserve_month_order=True)
+    scheduled_df = apply_dc_live_locks(scheduled_df, preserve_month_order=True)
 
     normalized_live = _normalize_live_column(scheduled_df[LIVE])
     scheduled_df["IsLive"] = normalized_live == "yes"
@@ -279,3 +347,36 @@ def enforce_forward_live_rows(df: pd.DataFrame, preserve_month_order: bool = Fal
         enforced_df = enforced_df.drop(columns=["_month_order"], errors="ignore")
 
     return enforced_df
+
+
+def ensure_final_month_live(
+    df: pd.DataFrame, preserve_month_order: bool = False
+) -> pd.DataFrame:
+    """Guarantee that every DC is live in its latest month and cascade forward.
+
+    Args:
+        df: DataFrame containing at least Month, DC Number, and Live? columns.
+        preserve_month_order: If True, keep an existing ``_month_order`` helper
+            column so callers relying on it can continue to do so.
+
+    Returns:
+        A DataFrame with Live? adjusted so that each DC is live in its final
+        month of the calendar, with forward-live enforcement applied.
+    """
+
+    ensured_df = df.copy()
+    added_month_order = False
+
+    if "_month_order" not in ensured_df.columns:
+        ensured_df["_month_order"] = ensured_df[MONTH].apply(month_order_value)
+        added_month_order = True
+
+    final_month_per_dc = ensured_df.groupby(DC_NUMBER)["_month_order"].transform("max")
+    ensured_df.loc[ensured_df["_month_order"] == final_month_per_dc, LIVE] = "Yes"
+
+    ensured_df = enforce_forward_live_rows(ensured_df, preserve_month_order=True)
+
+    if added_month_order and not preserve_month_order:
+        ensured_df = ensured_df.drop(columns=["_month_order"], errors="ignore")
+
+    return ensured_df
