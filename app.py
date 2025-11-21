@@ -251,21 +251,26 @@ def main() -> None:
                 unsafe_allow_html=True,
             )
             uploader_slot = st.empty()
-            status_slot = st.empty()
 
         with spacer:
             template_export_slot = st.empty()
             manual_download_slot = st.empty()
+
+    description_col, status_col = st.columns([3, 2])
+    with description_col:
+        st.markdown(
+            "Interactively explore manual and optimized activation schedules to reach your target FY26 savings.",
+            help=None,
+        )
+
+    with status_col:
+        status_slot = st.empty()
 
     uploaded_file = uploader_slot.file_uploader(
         "Upload P4P template (.xlsx)",
         type=["xlsx"],
         label_visibility="collapsed",
         help="If empty, the default template from data/p4p_template.xlsx is used.",
-    )
-
-    st.write(
-        "Interactively explore manual and optimized activation schedules to reach your target FY26 savings."
     )
 
     # Load the base dataset that describes each DC, its region, the month value,
@@ -281,14 +286,17 @@ def main() -> None:
     # Users enter the target savings that optimization routines will try to
     # reach. Keeping ``step`` at a large increment makes entry easier for big
     # numbers.
-    target_col, _ = st.columns([1, 2])
-    with target_col:
+    label_col, input_col = st.columns([1.2, 0.6])
+    with label_col:
+        st.markdown("Target FY26 savings ($):")
+    with input_col:
         target_savings = st.number_input(
             "Target FY26 savings ($)",
             min_value=0.0,
             value=0.0,
             step=100000.0,
             format="%.0f",
+            label_visibility="collapsed",
         )
 
     # Build a pivoted version of the dataset that Streamlit can display as a
