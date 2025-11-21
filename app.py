@@ -33,6 +33,26 @@ from model import (
 TEMPLATE_COLUMNS = list(REQUIRED_COLUMNS)
 
 
+def inject_compact_uploader_css():
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stFileUploadDropzone"] {
+            padding: 4px 8px !important;
+        }
+        div[data-testid="stFileUploadDropzone"] > div:nth-child(1) {
+            min-height: 0 !important;
+            padding: 4px 8px !important;
+        }
+        div[data-testid="stFileUploadDropzone"] svg {
+            display: none !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 @st.cache_data
 def _load_data_from_source(file_bytes: bytes | None) -> pd.DataFrame:
     """
@@ -232,11 +252,12 @@ def main() -> None:
     """Render the Streamlit UI and orchestrate user interactions."""
 
     st.set_page_config(layout="wide")
+    inject_compact_uploader_css()
 
     scenario_bytes = st.session_state.get("scenario_bytes")
 
     # --- Compact toolbar above title ---
-    col_status, col_upload, col_download = st.columns([2, 3, 2])
+    col_spacer, col_status, col_upload, col_download = st.columns([4, 2, 3, 2])
 
     # Status pill (non-interactive)
     with col_status:
@@ -270,7 +291,7 @@ def main() -> None:
             "Upload template (.xlsx)",
             type=["xlsx"],
             label_visibility="collapsed",
-            key="uploader"
+            key="uploader",
         )
         if uploaded is not None:
             st.session_state["template_filename"] = uploaded.name
