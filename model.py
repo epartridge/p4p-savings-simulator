@@ -240,6 +240,10 @@ def build_greedy_schedule(
 
     initial_counts = np.zeros(len(month_orders), dtype=int)
     for dc_number in scheduled_df[DC_ID].unique():
+        # Locked DCs (e.g., Houston, Winchester) are excluded from the cap so they
+        # do not consume first-month slots.
+        if is_locked_dc(dc_number):
+            continue
         first_live_idx = first_live_month_index(dc_number)
         if first_live_idx is not None:
             initial_counts[first_live_idx] += 1
@@ -449,9 +453,6 @@ def build_region_grouped_schedule(
     month_weight = 1.0 + late_month_bias * month_scale
 
     def first_live_month_index(dc_number: object) -> int | None:
-        if is_locked_dc(dc_number):
-            return None
-
         dc_rows = scheduled_df[scheduled_df[DC_ID] == dc_number].sort_values(
             "_month_order"
         )
@@ -463,6 +464,8 @@ def build_region_grouped_schedule(
 
     initial_counts = np.zeros(len(month_orders), dtype=int)
     for dc_number in scheduled_df[DC_ID].unique():
+        # Locked DCs (e.g., Houston, Winchester) are excluded from the cap so they
+        # do not consume first-month slots.
         if is_locked_dc(dc_number):
             continue
         first_live_idx = first_live_month_index(dc_number)
