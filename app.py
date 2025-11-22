@@ -533,6 +533,8 @@ def main() -> None:
             st.session_state["optimization_result_total"] = region_total
             st.session_state["region_grouped_result_df"] = region_df
 
+        optimization_total_placeholder = st.empty()
+
         if "optimization_calendar" in st.session_state:
             optimization_calendar, optimization_df = apply_schedule_rules(
                 st.session_state["optimization_calendar"], month_columns, df
@@ -542,9 +544,6 @@ def main() -> None:
             st.session_state["optimization_result_df"] = optimization_df
             _, optimization_calendar_total = calculate_scenario_savings(optimization_df)
             st.session_state["optimization_result_total"] = optimization_calendar_total
-            st.markdown(
-                f"**Current optimization calendar total savings: ${optimization_calendar_total:,.0f}**"
-            )
 
         header_col, reset_col = st.columns([6, 1])
         header_col.subheader("DC Go-Live Calendar")
@@ -571,12 +570,16 @@ def main() -> None:
         updated_opt_pivot, updated_opt_df = apply_schedule_rules(
             edited_optimization_pivot, month_columns, df
         )
+        st.session_state["optimization_result_df"] = updated_opt_df
+        _, adjusted_total = calculate_scenario_savings(updated_opt_df)
+        st.session_state["optimization_result_total"] = adjusted_total
+        optimization_total_placeholder.markdown(
+            f"**Current optimization calendar total savings: ${adjusted_total:,.0f}**"
+        )
+
         if not updated_opt_pivot.equals(st.session_state["optimization_calendar"]):
             st.session_state["optimization_calendar"] = updated_opt_pivot
-            st.session_state["optimization_result_df"] = updated_opt_df
             st.session_state["optimization_result_label"] = "Adjusted optimization"
-            _, adjusted_total = calculate_scenario_savings(updated_opt_df)
-            st.session_state["optimization_result_total"] = adjusted_total
             rerun()
 
         if "optimization_result_df" in st.session_state:
