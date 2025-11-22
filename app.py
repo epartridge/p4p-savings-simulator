@@ -540,7 +540,7 @@ def main() -> None:
     latest_manual_result_df = st.session_state.get("latest_manual_result_df")
     template_export_df = st.session_state.get("latest_template_df", df)
 
-    download_df = latest_manual_result_df or template_export_df
+    download_df = latest_manual_result_df if latest_manual_result_df is not None else template_export_df
     scenario_bytes = make_download_excel(download_df)
     st.session_state["scenario_bytes"] = scenario_bytes
 
