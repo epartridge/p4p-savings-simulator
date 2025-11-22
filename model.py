@@ -186,6 +186,8 @@ def build_greedy_schedule(
     df: pd.DataFrame,
     target_savings: float,
     max_initial_golives_per_month: int | None = None,
+    use_late_month_bias: bool = False,
+    late_month_bias: float = 0.0,
 ) -> tuple[pd.DataFrame, float]:
     """
     Starting from all Live? = 'No', greedily turn rows live one building at a time.
@@ -198,6 +200,13 @@ def build_greedy_schedule(
     Args:
         df: Input DataFrame containing at least the Dollar Impact column.
         target_savings: Target cumulative savings to achieve.
+        use_late_month_bias: Toggle to enable soft boosting of later months when
+            choosing go-live candidates. Defaults to False.
+        late_month_bias: Optional multiplier that softly boosts later months when
+            choosing go-live candidates. A value of 0.0 keeps the default
+            behavior.
+        max_initial_golives_per_month: Maximum number of DCs allowed to begin
+            their go-live in the same month. If None, no limit is applied.
 
     Returns:
         A tuple of (scheduled DataFrame with updated Live? and helper columns, cumulative savings achieved).
@@ -215,6 +224,9 @@ def build_greedy_schedule(
 
     month_orders = sorted(scheduled_df["_month_order"].unique())
     month_index = {month_order: idx for idx, month_order in enumerate(month_orders)}
+    num_months = len(month_orders)
+    month_scale = np.arange(num_months, dtype=float) / max(1, num_months - 1)
+    month_weight = 1.0 + late_month_bias * month_scale
 
     def first_live_month_index(dc_number: object) -> int | None:
         dc_rows = scheduled_df[scheduled_df[DC_ID] == dc_number].sort_values(
@@ -246,40 +258,121 @@ def build_greedy_schedule(
             break
 
         dc_rows = scheduled_df[scheduled_df[DC_ID] == dc_number]
-        for month_order in sorted(dc_rows["_month_order"].unique(), reverse=True):
-            if cumulative_savings >= target_savings:
-                break
+        candidate_month_orders = sorted(
+            dc_rows["_month_order"].unique(), reverse=True
+        )
 
-            month_idx = month_index[month_order]
-            current_first_idx = first_live_month_index(dc_number)
-            if (
-                max_initial_golives_per_month is not None
-                and month_idx != current_first_idx
-                and initial_counts[month_idx] >= max_initial_golives_per_month
-            ):
-                continue
+        if not use_late_month_bias or late_month_bias == 0.0:
+            for month_order in candidate_month_orders:
+                if cumulative_savings >= target_savings:
+                    break
 
-            dc_mask = scheduled_df[DC_ID] == dc_number
-            scheduled_df.loc[
-                dc_mask & (scheduled_df["_month_order"] >= month_order), LIVE
-            ] = "Yes"
+                month_idx = month_index[month_order]
+                current_first_idx = first_live_month_index(dc_number)
+                if (
+                    max_initial_golives_per_month is not None
+                    and month_idx != current_first_idx
+                    and initial_counts[month_idx] >= max_initial_golives_per_month
+                ):
+                    continue
 
-            # Re-apply DC live locks after each change
-            scheduled_df = apply_dc_live_locks(
-                scheduled_df, preserve_month_order=True
-            )
+                dc_mask = scheduled_df[DC_ID] == dc_number
+                scheduled_df.loc[
+                    dc_mask & (scheduled_df["_month_order"] >= month_order), LIVE
+                ] = "Yes"
 
-            live_mask = _normalize_live_column(scheduled_df[LIVE]) == "yes"
-            cumulative_savings = float(
-                scheduled_df.loc[live_mask, DOLLAR_IMPACT].sum()
-            )
+                # Re-apply DC live locks after each change
+                scheduled_df = apply_dc_live_locks(
+                    scheduled_df, preserve_month_order=True
+                )
 
-            if max_initial_golives_per_month is not None:
-                new_first_idx = first_live_month_index(dc_number)
-                if new_first_idx is not None and new_first_idx != current_first_idx:
-                    if current_first_idx is not None:
-                        initial_counts[current_first_idx] -= 1
-                    initial_counts[new_first_idx] += 1
+                live_mask = _normalize_live_column(scheduled_df[LIVE]) == "yes"
+                cumulative_savings = float(
+                    scheduled_df.loc[live_mask, DOLLAR_IMPACT].sum()
+                )
+
+                if max_initial_golives_per_month is not None:
+                    new_first_idx = first_live_month_index(dc_number)
+                    if new_first_idx is not None and new_first_idx != current_first_idx:
+                        if current_first_idx is not None:
+                            initial_counts[current_first_idx] -= 1
+                        initial_counts[new_first_idx] += 1
+        else:
+            remaining_month_orders = candidate_month_orders
+            while cumulative_savings < target_savings and remaining_month_orders:
+                dc_mask = scheduled_df[DC_ID] == dc_number
+                current_first_idx = first_live_month_index(dc_number)
+                current_live_mask = (
+                    _normalize_live_column(scheduled_df[LIVE]) == "yes"
+                )
+
+                best_month_order: int | None = None
+                best_adjusted_value: float | None = None
+
+                for month_order in remaining_month_orders:
+                    month_idx = month_index[month_order]
+                    if (
+                        max_initial_golives_per_month is not None
+                        and month_idx != current_first_idx
+                        and initial_counts[month_idx] >= max_initial_golives_per_month
+                    ):
+                        continue
+
+                    month_mask = dc_mask & (
+                        scheduled_df["_month_order"] >= month_order
+                    )
+                    incremental_mask = month_mask & ~current_live_mask
+                    base_value = float(
+                        scheduled_df.loc[incremental_mask, DOLLAR_IMPACT].sum()
+                    )
+                    adjusted_value = base_value * month_weight[month_idx]
+
+                    if (
+                        best_adjusted_value is None
+                        or adjusted_value > best_adjusted_value
+                    ):
+                        best_month_order = month_order
+                        best_adjusted_value = adjusted_value
+
+                if best_month_order is None or best_adjusted_value is None:
+                    break
+
+                month_idx = month_index[best_month_order]
+                current_first_idx = first_live_month_index(dc_number)
+                if (
+                    max_initial_golives_per_month is not None
+                    and month_idx != current_first_idx
+                    and initial_counts[month_idx] >= max_initial_golives_per_month
+                ):
+                    remaining_month_orders = [
+                        order for order in remaining_month_orders if order != best_month_order
+                    ]
+                    continue
+
+                scheduled_df.loc[
+                    dc_mask & (scheduled_df["_month_order"] >= best_month_order), LIVE
+                ] = "Yes"
+
+                # Re-apply DC live locks after each change
+                scheduled_df = apply_dc_live_locks(
+                    scheduled_df, preserve_month_order=True
+                )
+
+                live_mask = _normalize_live_column(scheduled_df[LIVE]) == "yes"
+                cumulative_savings = float(
+                    scheduled_df.loc[live_mask, DOLLAR_IMPACT].sum()
+                )
+
+                if max_initial_golives_per_month is not None:
+                    new_first_idx = first_live_month_index(dc_number)
+                    if new_first_idx is not None and new_first_idx != current_first_idx:
+                        if current_first_idx is not None:
+                            initial_counts[current_first_idx] -= 1
+                        initial_counts[new_first_idx] += 1
+
+                remaining_month_orders = [
+                    order for order in remaining_month_orders if order < best_month_order
+                ]
 
     # Ensure each DC is live in its final month and cascade forward, then re-lock
     scheduled_df = ensure_final_month_live(scheduled_df, preserve_month_order=True)
@@ -303,6 +396,8 @@ def build_region_grouped_schedule(
     df: pd.DataFrame,
     target_savings: float,
     max_initial_golives_per_month: int | None = None,
+    use_late_month_bias: bool = False,
+    late_month_bias: float = 0.0,
 ) -> tuple[pd.DataFrame, float]:
     """
     Greedily schedule savings by selecting whole regions in a month together.
@@ -316,6 +411,13 @@ def build_region_grouped_schedule(
     Args:
         df: Input DataFrame containing at least Region, Month, and Dollar Impact columns.
         target_savings: Target cumulative savings to achieve.
+        use_late_month_bias: Toggle to enable soft boosting of later months when
+            choosing go-live candidates. Defaults to False.
+        late_month_bias: Optional multiplier that softly boosts later months when
+            choosing go-live candidates. A value of 0.0 keeps the default
+            behavior.
+        max_initial_golives_per_month: Maximum number of DCs allowed to begin
+            their go-live in the same month. If None, no limit is applied.
 
     Returns:
         A tuple of (scheduled DataFrame with updated Live? and helper columns, cumulative savings achieved).
@@ -330,6 +432,9 @@ def build_region_grouped_schedule(
 
     month_orders = sorted(scheduled_df["_month_order"].unique())
     month_index = {month_order: idx for idx, month_order in enumerate(month_orders)}
+    num_months = len(month_orders)
+    month_scale = np.arange(num_months, dtype=float) / max(1, num_months - 1)
+    month_weight = 1.0 + late_month_bias * month_scale
 
     def first_live_month_index(dc_number: object) -> int | None:
         dc_rows = scheduled_df[scheduled_df[DC_ID] == dc_number].sort_values(
@@ -370,9 +475,22 @@ def build_region_grouped_schedule(
             break
 
         region_rows = region_month_savings[region_month_savings[REGION] == region]
-        for _, row in region_rows.sort_values(
-            by=["_month_order", DOLLAR_IMPACT], ascending=[False, False]
-        ).iterrows():
+        if not use_late_month_bias or late_month_bias == 0.0:
+            iter_rows = region_rows.sort_values(
+                by=["_month_order", DOLLAR_IMPACT], ascending=[False, False]
+            ).iterrows()
+        else:
+            weighted_rows = region_rows.copy()
+            weighted_rows["adjusted_value"] = weighted_rows.apply(
+                lambda row: row[DOLLAR_IMPACT]
+                * month_weight[month_index[row["_month_order"]]],
+                axis=1,
+            )
+            iter_rows = weighted_rows.sort_values(
+                by=["adjusted_value", "_month_order"], ascending=[False, False]
+            ).iterrows()
+
+        for _, row in iter_rows:
             if cumulative_savings >= target_savings:
                 break
 
