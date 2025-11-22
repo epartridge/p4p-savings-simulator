@@ -430,6 +430,18 @@ def build_region_grouped_schedule(
     ).fillna(0.0)
     scheduled_df["_month_order"] = scheduled_df[MONTH].apply(month_order_value)
 
+    # Apply DC-specific live locks up front so their schedules are preserved and the
+    # go-live cap calculations are based on the correct baseline state.
+    scheduled_df = apply_dc_live_locks(scheduled_df, preserve_month_order=True)
+
+    locked_dc_names = set(DC_LIVE_LOCKS.keys())
+
+    def is_locked_dc(dc_number: object) -> bool:
+        dc_rows = scheduled_df[scheduled_df[DC_ID] == dc_number]
+        if dc_rows.empty:
+            return False
+        return dc_rows[DC_NAME].iloc[0] in locked_dc_names
+
     month_orders = sorted(scheduled_df["_month_order"].unique())
     month_index = {month_order: idx for idx, month_order in enumerate(month_orders)}
     num_months = len(month_orders)
@@ -437,6 +449,9 @@ def build_region_grouped_schedule(
     month_weight = 1.0 + late_month_bias * month_scale
 
     def first_live_month_index(dc_number: object) -> int | None:
+        if is_locked_dc(dc_number):
+            return None
+
         dc_rows = scheduled_df[scheduled_df[DC_ID] == dc_number].sort_values(
             "_month_order"
         )
@@ -448,6 +463,8 @@ def build_region_grouped_schedule(
 
     initial_counts = np.zeros(len(month_orders), dtype=int)
     for dc_number in scheduled_df[DC_ID].unique():
+        if is_locked_dc(dc_number):
+            continue
         first_live_idx = first_live_month_index(dc_number)
         if first_live_idx is not None:
             initial_counts[first_live_idx] += 1
@@ -505,6 +522,8 @@ def build_region_grouped_schedule(
                 for dc_number in scheduled_df.loc[
                     region_mask & month_mask, DC_ID
                 ].unique():
+                    if is_locked_dc(dc_number):
+                        continue
                     current_first_idx = first_live_month_index(dc_number)
                     if current_first_idx == candidate_idx:
                         continue
