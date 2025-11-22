@@ -257,14 +257,14 @@ def main() -> None:
 
     scenario_bytes = st.session_state.get("scenario_bytes")
 
+    if "template_filename" not in st.session_state:
+        st.session_state["template_filename"] = "DEFAULT"
+
     # --- Compact toolbar above title ---
-    col_spacer, col_status, col_upload, col_download = st.columns([4, 2, 3, 2])
+    col_spacer, col_status, col_download = st.columns([5, 3, 2])
 
     # Status pill (non-interactive)
     with col_status:
-        if "template_filename" not in st.session_state:
-            st.session_state["template_filename"] = "DEFAULT"
-
         filename = st.session_state["template_filename"]
         if filename == "DEFAULT":
             label = "Using default template"
@@ -285,21 +285,6 @@ def main() -> None:
             """,
             unsafe_allow_html=True,
         )
-
-    # File uploader (compact)
-    with col_upload:
-        uploaded = st.file_uploader(
-            "Upload template (.xlsx)",
-            type=["xlsx"],
-            label_visibility="collapsed",
-            key="uploader",
-        )
-        if uploaded is not None:
-            st.session_state["template_filename"] = uploaded.name
-            st.session_state["uploaded_file"] = uploaded
-        else:
-            st.session_state.pop("uploaded_file", None)
-            st.session_state["template_filename"] = "DEFAULT"
 
     # Download scenario button
     with col_download:
@@ -381,7 +366,9 @@ def main() -> None:
 
     column_order = [REGION, DC_NUMBER_NAME] + month_columns
 
-    manual_tab, optimizations_tab = st.tabs(["Manual selection", "Optimizations"])
+    manual_tab, optimizations_tab, data_tab = st.tabs(
+        ["Manual selection", "Optimizations", "Data / Import-Export"]
+    )
 
     with manual_tab:
         rerun = getattr(st, "experimental_rerun", None) or getattr(st, "rerun")
@@ -440,6 +427,49 @@ def main() -> None:
             label="Download updated template (manual scenario)",
             data=excel_bytes,
             file_name="p4p_manual_scenario.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    with data_tab:
+        st.subheader("Data import and export")
+
+        uploader = st.file_uploader(
+            "Upload custom template (.xlsx)",
+            type=["xlsx"],
+            label_visibility="collapsed",
+            key="uploader",
+        )
+
+        if uploader is not None:
+            st.session_state["uploaded_file"] = uploader
+            st.session_state["template_filename"] = uploader.name
+
+        if st.button("Reset to default template"):
+            st.session_state.pop("uploaded_file", None)
+            st.session_state["template_filename"] = "DEFAULT"
+
+        st.divider()
+
+        if scenario_bytes is not None:
+            st.download_button(
+                "Download current scenario",
+                data=scenario_bytes,
+                file_name="p4p_scenario.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        else:
+            st.download_button(
+                "Download current scenario",
+                data=None,
+                file_name="p4p_scenario.xlsx",
+                disabled=True,
+            )
+
+        default_template_bytes = make_download_excel(load_template_df())
+        st.download_button(
+            "Download default template",
+            data=default_template_bytes,
+            file_name="p4p_template.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
