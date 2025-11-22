@@ -255,48 +255,8 @@ def main() -> None:
     st.set_page_config(layout="wide")
     inject_compact_uploader_css()
 
-    scenario_bytes = st.session_state.get("scenario_bytes")
-
     if "template_filename" not in st.session_state:
         st.session_state["template_filename"] = "DEFAULT"
-
-    # --- Compact toolbar above title ---
-    col_spacer, col_status, col_download = st.columns([5, 3, 2])
-
-    # Status pill (non-interactive)
-    with col_status:
-        filename = st.session_state["template_filename"]
-        if filename == "DEFAULT":
-            label = "Using default template"
-        else:
-            label = f"Using custom template: {filename}"
-
-        st.markdown(
-            f"""
-            <div style="
-                display:inline-block;
-                padding:4px 10px;
-                border-radius:12px;
-                background:#e8f0fe;
-                color:#1a3e8a;
-                font-size:13px;
-                font-weight:600;
-            ">{label}</div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    # Download scenario button
-    with col_download:
-        if scenario_bytes is not None:
-            st.download_button(
-                "Download scenario",
-                data=scenario_bytes,
-                file_name="p4p_scenario.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-        else:
-            st.button("Download scenario", disabled=True)
 
     st.title("P4P Savings Simulator")
 
@@ -367,7 +327,7 @@ def main() -> None:
     column_order = [REGION, DC_NUMBER_NAME] + month_columns
 
     manual_tab, optimizations_tab, data_tab = st.tabs(
-        ["Manual selection", "Optimizations", "Data / Import-Export"]
+        ["Manual selection", "Optimizations", "Data Import/Export"]
     )
 
     with manual_tab:
@@ -430,8 +390,49 @@ def main() -> None:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
+    latest_manual_result_df = st.session_state.get("latest_manual_result_df")
+    template_export_df = st.session_state.get("latest_template_df", df)
+
+    download_df = (
+        latest_manual_result_df if latest_manual_result_df is not None else template_export_df
+    )
+    scenario_bytes = make_download_excel(download_df)
+    st.session_state["scenario_bytes"] = scenario_bytes
+
     with data_tab:
         st.subheader("Data import and export")
+
+        status_col, download_col = st.columns([3, 2])
+
+        with status_col:
+            filename = st.session_state["template_filename"]
+            if filename == "DEFAULT":
+                label = "Using default template"
+            else:
+                label = f"Using custom template: {filename}"
+
+            st.markdown(
+                f"""
+                <div style="
+                    display:inline-block;
+                    padding:4px 10px;
+                    border-radius:12px;
+                    background:#e8f0fe;
+                    color:#1a3e8a;
+                    font-size:13px;
+                    font-weight:600;
+                ">{label}</div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        with download_col:
+            st.download_button(
+                "Download scenario",
+                data=scenario_bytes,
+                file_name="p4p_scenario.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
 
         uploader = st.file_uploader(
             "Upload custom template (.xlsx)",
@@ -450,20 +451,12 @@ def main() -> None:
 
         st.divider()
 
-        if scenario_bytes is not None:
-            st.download_button(
-                "Download current scenario",
-                data=scenario_bytes,
-                file_name="p4p_scenario.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-        else:
-            st.download_button(
-                "Download current scenario",
-                data=None,
-                file_name="p4p_scenario.xlsx",
-                disabled=True,
-            )
+        st.download_button(
+            "Download current scenario",
+            data=scenario_bytes,
+            file_name="p4p_scenario.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
         default_template_bytes = make_download_excel(load_template_df())
         st.download_button(
@@ -576,14 +569,6 @@ def main() -> None:
                     file_name="p4p_region_grouped_scenario.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
-
-    latest_manual_result_df = st.session_state.get("latest_manual_result_df")
-    template_export_df = st.session_state.get("latest_template_df", df)
-
-    download_df = latest_manual_result_df if latest_manual_result_df is not None else template_export_df
-    scenario_bytes = make_download_excel(download_df)
-    st.session_state["scenario_bytes"] = scenario_bytes
-
 
 if __name__ == "__main__":
     main()
