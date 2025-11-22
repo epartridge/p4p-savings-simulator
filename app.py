@@ -31,6 +31,7 @@ from model import (
 
 
 TEMPLATE_COLUMNS = list(REQUIRED_COLUMNS)
+LATE_MONTH_BIAS_STRENGTH = 0.6
 
 
 def inject_compact_uploader_css():
@@ -448,9 +449,14 @@ def main() -> None:
             return
 
             st.subheader("Run Optimizations")
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns([2, 2, 2])
         run_greedy = col1.button("Run greedy by Dollar Impact", use_container_width=True)
         run_region_grouped = col2.button("Run region-grouped schedule", use_container_width=True)
+        prefer_late_months = col3.toggle(
+            "Prefer later go-lives",
+            value=False,
+            help="Softly prioritize later months when selecting go-live schedules.",
+        )
 
         if run_greedy:
             # Greedy algorithm prioritizes later months before turning on the
@@ -459,6 +465,8 @@ def main() -> None:
                 df,
                 target_savings,
                 max_initial_golives_per_month=int(max_initial_golives_per_month),
+                use_late_month_bias=prefer_late_months,
+                late_month_bias=LATE_MONTH_BIAS_STRENGTH,
             )
             _, greedy_total = calculate_scenario_savings(greedy_df)
             st.session_state["optimization_calendar"], _ = build_calendar_pivot(greedy_df)
@@ -475,6 +483,8 @@ def main() -> None:
                 df,
                 target_savings,
                 max_initial_golives_per_month=int(max_initial_golives_per_month),
+                use_late_month_bias=prefer_late_months,
+                late_month_bias=LATE_MONTH_BIAS_STRENGTH,
             )
             _, region_total = calculate_scenario_savings(region_df)
             st.session_state["optimization_calendar"], _ = build_calendar_pivot(region_df)
