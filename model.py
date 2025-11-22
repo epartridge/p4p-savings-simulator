@@ -182,6 +182,20 @@ def apply_dc_live_locks(df: pd.DataFrame, preserve_month_order: bool = False) ->
     return locked_df
 
 
+def is_locked_dc(df: pd.DataFrame, dc_number: object) -> bool:
+    """Return True if a DC is governed by a locked go-live schedule.
+
+    The lookup is based on ``DC Name`` because the lock configuration is keyed by
+    name. The helper is intentionally lightweight so it can be reused anywhere we
+    need to treat locked DCs differently (e.g., when applying go-live caps).
+    """
+
+    dc_rows = df[df[DC_ID] == dc_number]
+    if dc_rows.empty:
+        return False
+    return dc_rows[DC_NAME].iloc[0] in DC_LIVE_LOCKS
+
+
 def build_greedy_schedule(
     df: pd.DataFrame,
     target_savings: float,
@@ -240,10 +254,6 @@ def build_greedy_schedule(
 
     initial_counts = np.zeros(len(month_orders), dtype=int)
     for dc_number in scheduled_df[DC_ID].unique():
-        # Locked DCs (e.g., Houston, Winchester) are excluded from the cap so they
-        # do not consume first-month slots.
-        if is_locked_dc(dc_number):
-            continue
         first_live_idx = first_live_month_index(dc_number)
         if first_live_idx is not None:
             initial_counts[first_live_idx] += 1
@@ -379,7 +389,9 @@ def build_greedy_schedule(
                 ]
 
     # Ensure each DC is live in its final month and cascade forward, then re-lock
-    scheduled_df = ensure_final_month_live(scheduled_df, preserve_month_order=True)
+    scheduled_df = ensure_final_month_live(
+        scheduled_df, preserve_month_order=True, only_if_currently_live=True
+    )
     scheduled_df = apply_dc_live_locks(scheduled_df, preserve_month_order=True)
 
     normalized_live = _normalize_live_column(scheduled_df[LIVE])
@@ -438,14 +450,6 @@ def build_region_grouped_schedule(
     # go-live cap calculations are based on the correct baseline state.
     scheduled_df = apply_dc_live_locks(scheduled_df, preserve_month_order=True)
 
-    locked_dc_names = set(DC_LIVE_LOCKS.keys())
-
-    def is_locked_dc(dc_number: object) -> bool:
-        dc_rows = scheduled_df[scheduled_df[DC_ID] == dc_number]
-        if dc_rows.empty:
-            return False
-        return dc_rows[DC_NAME].iloc[0] in locked_dc_names
-
     month_orders = sorted(scheduled_df["_month_order"].unique())
     month_index = {month_order: idx for idx, month_order in enumerate(month_orders)}
     num_months = len(month_orders)
@@ -464,10 +468,6 @@ def build_region_grouped_schedule(
 
     initial_counts = np.zeros(len(month_orders), dtype=int)
     for dc_number in scheduled_df[DC_ID].unique():
-        # Locked DCs (e.g., Houston, Winchester) are excluded from the cap so they
-        # do not consume first-month slots.
-        if is_locked_dc(dc_number):
-            continue
         first_live_idx = first_live_month_index(dc_number)
         if first_live_idx is not None:
             initial_counts[first_live_idx] += 1
@@ -525,8 +525,6 @@ def build_region_grouped_schedule(
                 for dc_number in scheduled_df.loc[
                     region_mask & month_mask, DC_ID
                 ].unique():
-                    if is_locked_dc(dc_number):
-                        continue
                     current_first_idx = first_live_month_index(dc_number)
                     if current_first_idx == candidate_idx:
                         continue
@@ -559,7 +557,9 @@ def build_region_grouped_schedule(
             )
 
     # Ensure each DC is live in its final month and cascade forward, then re-lock
-    scheduled_df = ensure_final_month_live(scheduled_df, preserve_month_order=True)
+    scheduled_df = ensure_final_month_live(
+        scheduled_df, preserve_month_order=True, only_if_currently_live=True
+    )
     scheduled_df = apply_dc_live_locks(scheduled_df, preserve_month_order=True)
 
     normalized_live = _normalize_live_column(scheduled_df[LIVE])
@@ -612,7 +612,9 @@ def enforce_forward_live_rows(df: pd.DataFrame, preserve_month_order: bool = Fal
 
 
 def ensure_final_month_live(
-    df: pd.DataFrame, preserve_month_order: bool = False
+    df: pd.DataFrame,
+    preserve_month_order: bool = False,
+    only_if_currently_live: bool = False,
 ) -> pd.DataFrame:
     """Guarantee that every DC is live in its latest month and cascade forward.
 
@@ -634,7 +636,15 @@ def ensure_final_month_live(
         added_month_order = True
 
     final_month_per_dc = ensured_df.groupby(DC_ID)["_month_order"].transform("max")
-    ensured_df.loc[ensured_df["_month_order"] == final_month_per_dc, LIVE] = "Yes"
+    if only_if_currently_live:
+        live_mask = _normalize_live_column(ensured_df[LIVE]) == "yes"
+        currently_live_dcs = set(ensured_df.loc[live_mask, DC_ID])
+        locked_dcs = {dc_number for dc_number in ensured_df[DC_ID].unique() if is_locked_dc(ensured_df, dc_number)}
+        eligible_dcs = currently_live_dcs | locked_dcs
+        final_month_mask = ensured_df["_month_order"] == final_month_per_dc
+        ensured_df.loc[final_month_mask & ensured_df[DC_ID].isin(eligible_dcs), LIVE] = "Yes"
+    else:
+        ensured_df.loc[ensured_df["_month_order"] == final_month_per_dc, LIVE] = "Yes"
 
     ensured_df = enforce_forward_live_rows(ensured_df, preserve_month_order=True)
 
