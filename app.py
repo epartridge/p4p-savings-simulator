@@ -89,6 +89,17 @@ def load_template_df() -> pd.DataFrame:
     return base
 
 
+def build_reset_calendar(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a cleared calendar pivot that respects locked DCs and final-month rules."""
+
+    reset_df = df.copy()
+    reset_df[LIVE] = "No"
+    reset_df = ensure_final_month_live(reset_df)
+    reset_df = apply_dc_live_locks(reset_df)
+    reset_pivot, _ = build_calendar_pivot(reset_df)
+    return reset_pivot
+
+
 def normalize_live_bool(series: pd.Series) -> pd.Series:
     """Convert a column containing "Yes"/"No" text into booleans.
 
@@ -356,7 +367,12 @@ def main() -> None:
                     "Consider adjusting selections or running optimizations."
                 )
 
-        st.subheader("DC Go-Live Calendar")
+        header_col, reset_col = st.columns([6, 1])
+        header_col.subheader("DC Go-Live Calendar")
+        if reset_col.button("Reset", key="manual_calendar_reset"):
+            st.session_state["manual_pivot_data"] = build_reset_calendar(df)
+            rerun()
+
         edited_pivot = st.data_editor(
             constrained_pivot,
             use_container_width=True,
@@ -467,6 +483,7 @@ def main() -> None:
         )
 
     with optimizations_tab:
+        rerun = getattr(st, "experimental_rerun", None) or getattr(st, "rerun")
         if target_savings <= 0:
             st.warning("Enter a positive target savings above to run optimizations.")
             return
@@ -529,17 +546,38 @@ def main() -> None:
                 f"**Current optimization calendar total savings: ${optimization_calendar_total:,.0f}**"
             )
 
-        st.subheader("DC Go-Live Calendar")
-        st.data_editor(
+        header_col, reset_col = st.columns([6, 1])
+        header_col.subheader("DC Go-Live Calendar")
+        if reset_col.button("Reset", key="optimization_calendar_reset"):
+            st.session_state["optimization_calendar"] = build_reset_calendar(df)
+            st.session_state.pop("optimization_result_df", None)
+            st.session_state.pop("optimization_result_label", None)
+            st.session_state.pop("optimization_result_total", None)
+            st.session_state.pop("greedy_result_df", None)
+            st.session_state.pop("region_grouped_result_df", None)
+            rerun()
+
+        edited_optimization_pivot = st.data_editor(
             st.session_state["optimization_calendar"],
             use_container_width=True,
             column_config=column_config,
             column_order=column_order,
-            disabled=True,
+            disabled=False,
             hide_index=True,
             height=calendar_height(len(st.session_state["optimization_calendar"])),
             key="optimization_dc_month_grid",
         )
+
+        updated_opt_pivot, updated_opt_df = apply_schedule_rules(
+            edited_optimization_pivot, month_columns, df
+        )
+        if not updated_opt_pivot.equals(st.session_state["optimization_calendar"]):
+            st.session_state["optimization_calendar"] = updated_opt_pivot
+            st.session_state["optimization_result_df"] = updated_opt_df
+            st.session_state["optimization_result_label"] = "Adjusted optimization"
+            _, adjusted_total = calculate_scenario_savings(updated_opt_df)
+            st.session_state["optimization_result_total"] = adjusted_total
+            rerun()
 
         if "optimization_result_df" in st.session_state:
             result_label = st.session_state.get("optimization_result_label", "Latest optimization")
