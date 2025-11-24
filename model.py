@@ -71,6 +71,12 @@ def calculate_incremental_value_matrix(
 
     _ = params
 
+    def ordered_month_labels(months: Sequence[object]) -> list:
+        month_set = set(months)
+        ordered = [month for month in MONTH_ORDER if month in month_set]
+        extras = [month for month in months if month not in ordered]
+        return ordered + extras
+
     value_df = template_df.copy()
     value_df[LIVE] = "No"
     value_df[DOLLAR_IMPACT] = pd.to_numeric(value_df[DOLLAR_IMPACT], errors="coerce").fillna(
@@ -80,27 +86,41 @@ def calculate_incremental_value_matrix(
 
     value_df = apply_dc_live_locks(value_df, preserve_month_order=True)
 
-    month_orders = sorted(value_df["_month_order"].unique())
-    month_labels = [
-        value_df.loc[value_df["_month_order"] == month_order, MONTH].iloc[0]
-        for month_order in month_orders
-    ]
+    calendar_df = value_df.copy()
+    calendar_df["IsLiveBool"] = _normalize_live_column(calendar_df[LIVE]) == "yes"
+    calendar_pivot = calendar_df.pivot_table(
+        index=[REGION, DC_NUMBER_NAME],
+        columns=MONTH,
+        values="IsLiveBool",
+        aggfunc="first",
+    )
+    calendar_pivot = calendar_pivot.reindex(
+        columns=ordered_month_labels(calendar_pivot.columns), fill_value=False
+    )
+    calendar_pivot = calendar_pivot.fillna(False)
+    calendar_pivot.columns.name = None
+    calendar_reset = calendar_pivot.reset_index()
 
-    dc_numbers = list(value_df[DC_ID].unique())
-    dc_identifier_map = (
-        value_df.drop_duplicates(subset=[DC_ID, DC_NUMBER_NAME])
-        .set_index(DC_ID)[DC_NUMBER_NAME]
-        .to_dict()
+    month_labels = calendar_pivot.columns.tolist()
+    month_orders = [month_order_value(month_label) for month_label in month_labels]
+
+    building_order = calendar_reset[DC_NUMBER_NAME].tolist()
+    dc_numbers = (
+        value_df[[DC_NUMBER_NAME, DC_ID]]
+        .drop_duplicates()
+        .set_index(DC_NUMBER_NAME)
+        .reindex(building_order)[DC_ID]
+        .tolist()
     )
 
     incremental_matrix = pd.DataFrame(
         data=0.0,
-        index=[dc_identifier_map.get(dc_number, str(dc_number)) for dc_number in dc_numbers],
+        index=building_order,
         columns=month_labels,
         dtype=float,
     )
 
-    for dc_number in dc_numbers:
+    for dc_number, dc_label in zip(dc_numbers, building_order):
         dc_rows = value_df[value_df[DC_ID] == dc_number].sort_values("_month_order")
         current_live_mask = _normalize_live_column(dc_rows[LIVE]) == "yes"
 
@@ -109,9 +129,7 @@ def calculate_incremental_value_matrix(
             incremental_mask = month_mask & ~current_live_mask
             incremental_value = float(dc_rows.loc[incremental_mask, DOLLAR_IMPACT].sum())
 
-            incremental_matrix.loc[
-                dc_identifier_map.get(dc_number, str(dc_number)), month_label
-            ] = incremental_value
+            incremental_matrix.loc[dc_label, month_label] = incremental_value
 
     incremental_matrix.index.name = DC_NUMBER_NAME
 
