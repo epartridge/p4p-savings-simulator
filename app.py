@@ -11,9 +11,11 @@ Streamlit can understand the intent behind each block of code.
 
 import io
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
+import model
 from model import (
     REGION,
     DC_NUMBER_NAME,
@@ -339,8 +341,13 @@ def main() -> None:
 
     column_order = [REGION, DC_NUMBER_NAME] + month_columns
 
-    manual_tab, optimizations_tab, data_tab = st.tabs(
-        ["Manual selection", "Optimizations", "Data Import/Export"]
+    params = {
+        "target_savings": target_savings,
+        "max_initial_golives_per_month": max_initial_golives_per_month,
+    }
+
+    manual_tab, optimizations_tab, tab_heatmap, data_tab = st.tabs(
+        ["Manual selection", "Optimizations", "Value Heatmap", "Data Import/Export"]
     )
 
     with manual_tab:
@@ -416,6 +423,43 @@ def main() -> None:
     )
     scenario_bytes = make_download_excel(download_df)
     st.session_state["scenario_bytes"] = scenario_bytes
+
+    with tab_heatmap:
+        value_df = model.calculate_incremental_value_matrix(df, params)
+        index_name = value_df.index.name or "building"
+
+        value_long = (
+            value_df.reset_index()
+            .rename(columns={index_name: "building"})
+            .melt(id_vars="building", var_name="month", value_name="value")
+        )
+
+        building_order = value_df.index.tolist()
+        month_order = value_df.columns.tolist()
+        value_long["building"] = pd.Categorical(
+            value_long["building"], categories=building_order, ordered=True
+        )
+        value_long["month"] = pd.Categorical(
+            value_long["month"], categories=month_order, ordered=True
+        )
+
+        heatmap = (
+            alt.Chart(value_long)
+            .mark_rect()
+            .encode(
+                x=alt.X("month:N", title="Month", sort=month_order),
+                y=alt.Y("building:N", title="Building", sort=building_order),
+                color=alt.Color("value:Q", title="Incremental FY26 savings"),
+                tooltip=[
+                    alt.Tooltip("building:N", title="Building"),
+                    alt.Tooltip("month:N", title="Month"),
+                    alt.Tooltip("value:Q", title="Value ($)", format=",.0f"),
+                ],
+            )
+            .properties(height=500)
+        )
+
+        st.altair_chart(heatmap, use_container_width=True)
 
     with data_tab:
         st.subheader("Data import and export")
