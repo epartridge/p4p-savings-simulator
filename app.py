@@ -198,7 +198,9 @@ def apply_schedule_rules(
 
     enforced_pivot = enforce_forward_month_selection(pivot_df, month_columns)
     updated_df = rebuild_dataset_from_pivot(enforced_pivot, month_columns, template_df)
-    constrained_df = ensure_final_month_live(updated_df)
+    constrained_df = ensure_final_month_live(
+        updated_df, only_if_currently_live=True
+    )
     constrained_df = apply_dc_live_locks(constrained_df)
 
     constrained_pivot, _ = build_calendar_pivot(constrained_df)
