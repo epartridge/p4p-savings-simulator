@@ -57,6 +57,67 @@ REQUIRED_INPUT_COLUMNS: Sequence[str] = tuple(
 )
 
 
+def calculate_incremental_value_matrix(
+    template_df: pd.DataFrame, params
+) -> pd.DataFrame:
+    """
+    Returns a DataFrame mapping each building to the incremental FY26 savings per month.
+
+    The calculation mirrors the optimizer's evaluation logic by considering the
+    additional savings from turning on a DC starting in a given month. No new
+    business rules are introduced; the helper simply wraps the existing dollar
+    impact aggregation used during schedule construction.
+    """
+
+    _ = params
+
+    value_df = template_df.copy()
+    value_df[LIVE] = "No"
+    value_df[DOLLAR_IMPACT] = pd.to_numeric(value_df[DOLLAR_IMPACT], errors="coerce").fillna(
+        0.0
+    )
+    value_df["_month_order"] = value_df[MONTH].apply(month_order_value)
+
+    value_df = apply_dc_live_locks(value_df, preserve_month_order=True)
+
+    month_orders = sorted(value_df["_month_order"].unique())
+    month_labels = [
+        value_df.loc[value_df["_month_order"] == month_order, MONTH].iloc[0]
+        for month_order in month_orders
+    ]
+
+    dc_numbers = list(value_df[DC_ID].unique())
+    dc_identifier_map = (
+        value_df.drop_duplicates(subset=[DC_ID, DC_NUMBER_NAME])
+        .set_index(DC_ID)[DC_NUMBER_NAME]
+        .to_dict()
+    )
+
+    incremental_matrix = pd.DataFrame(
+        data=0.0,
+        index=[dc_identifier_map.get(dc_number, str(dc_number)) for dc_number in dc_numbers],
+        columns=month_labels,
+        dtype=float,
+    )
+
+    for dc_number in dc_numbers:
+        dc_rows = value_df[value_df[DC_ID] == dc_number].sort_values("_month_order")
+        current_live_mask = _normalize_live_column(dc_rows[LIVE]) == "yes"
+
+        for month_order, month_label in zip(month_orders, month_labels):
+            month_mask = dc_rows["_month_order"] >= month_order
+            incremental_mask = month_mask & ~current_live_mask
+            incremental_value = float(dc_rows.loc[incremental_mask, DOLLAR_IMPACT].sum())
+
+            incremental_matrix.loc[
+                dc_identifier_map.get(dc_number, str(dc_number)), month_label
+            ] = incremental_value
+
+    incremental_matrix.index.name = DC_NUMBER_NAME
+
+    return incremental_matrix
+
+
 def _format_dc_identifier(value: object) -> str:
     """Normalize DC IDs read from Excel into clean strings.
 
