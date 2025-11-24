@@ -434,12 +434,21 @@ def main() -> None:
             .melt(id_vars="building", var_name="month", value_name="value")
         )
 
+        building_order = value_df.index.tolist()
+        month_order = value_df.columns.tolist()
+        value_long["building"] = pd.Categorical(
+            value_long["building"], categories=building_order, ordered=True
+        )
+        value_long["month"] = pd.Categorical(
+            value_long["month"], categories=month_order, ordered=True
+        )
+
         heatmap = (
             alt.Chart(value_long)
             .mark_rect()
             .encode(
-                x=alt.X("month:N", title="Month"),
-                y=alt.Y("building:N", title="Building"),
+                x=alt.X("month:N", title="Month", sort=month_order),
+                y=alt.Y("building:N", title="Building", sort=building_order),
                 color=alt.Color("value:Q", title="Incremental FY26 savings"),
                 tooltip=[
                     alt.Tooltip("building:N", title="Building"),
