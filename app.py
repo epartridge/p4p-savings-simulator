@@ -495,7 +495,7 @@ def main() -> None:
         prefer_late_months = col3.toggle(
             "Prefer later go-lives",
             value=False,
-            help="Softly prioritize later months when selecting go-live schedules.",
+            help="Prioritize later go-lives when selecting schedule candidates.",
         )
 
         if run_greedy:
@@ -506,6 +506,7 @@ def main() -> None:
                 target_savings,
                 max_initial_golives_per_month=int(max_initial_golives_per_month),
                 use_late_month_bias=prefer_late_months,
+                prefer_late_golives=prefer_late_months,
                 late_month_bias=LATE_MONTH_BIAS_STRENGTH,
             )
             _, greedy_total = calculate_scenario_savings(greedy_df)
@@ -524,6 +525,7 @@ def main() -> None:
                 target_savings,
                 max_initial_golives_per_month=int(max_initial_golives_per_month),
                 use_late_month_bias=prefer_late_months,
+                prefer_late_golives=prefer_late_months,
                 late_month_bias=LATE_MONTH_BIAS_STRENGTH,
             )
             _, region_total = calculate_scenario_savings(region_df)
