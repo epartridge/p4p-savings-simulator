@@ -312,7 +312,8 @@ def rebuild_dataset_from_pivot(
         on=[REGION, DC_NUMBER_NAME, MONTH],
     )
 
-    updated_df[LIVE] = merged["IsLiveBool"].fillna(False).map({True: "Yes", False: "No"})
+    is_live = merged["IsLiveBool"].astype("boolean").fillna(False)
+    updated_df[LIVE] = is_live.map({True: "Yes", False: "No"})
     return updated_df
 
 
@@ -459,7 +460,7 @@ def main() -> None:
 
         edited_pivot = st.data_editor(
             constrained_pivot,
-            use_container_width=True,
+            width="stretch",
             num_rows="fixed",
             column_config=column_config,
             column_order=column_order,
@@ -482,7 +483,7 @@ def main() -> None:
         st.subheader("UPH Plan Output Format")
         st.dataframe(
             sanitize_object_columns(manual_result_df),
-            use_container_width=True,
+            width="stretch",
         )
 
         excel_bytes = make_download_excel(manual_result_df)
@@ -537,7 +538,7 @@ def main() -> None:
             .properties(height=500)
         )
 
-        st.altair_chart(heatmap, use_container_width=True)
+        st.altair_chart(heatmap, width="stretch")
 
     with data_tab:
         st.subheader("Data import and export")
@@ -614,8 +615,8 @@ def main() -> None:
 
             st.subheader("Run Optimizations")
         col1, col2, col3 = st.columns([2, 2, 2])
-        run_greedy = col1.button("Run greedy by Dollar Impact", use_container_width=True)
-        run_region_grouped = col2.button("Run region-grouped schedule", use_container_width=True)
+        run_greedy = col1.button("Run greedy by Dollar Impact", width="stretch")
+        run_region_grouped = col2.button("Run region-grouped schedule", width="stretch")
         prefer_late_months = col3.toggle(
             "Prefer later go-lives",
             value=False,
@@ -684,7 +685,7 @@ def main() -> None:
 
         edited_optimization_pivot = st.data_editor(
             st.session_state["optimization_calendar"],
-            use_container_width=True,
+            width="stretch",
             column_config=column_config,
             column_order=column_order,
             disabled=False,
@@ -717,7 +718,7 @@ def main() -> None:
             st.subheader("UPH Plan Output Format")
             st.dataframe(
                 sanitize_object_columns(st.session_state["optimization_result_df"]),
-                use_container_width=True,
+                width="stretch",
             )
 
             greedy_df = st.session_state.get("greedy_result_df")
