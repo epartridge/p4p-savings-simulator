@@ -17,11 +17,17 @@ import streamlit as st
 
 import model
 from model import (
+    DC_ID,
+    DC_NAME,
     REGION,
     DC_NUMBER_NAME,
     MONTH,
     MONTH_ORDER,
+    DOLLAR_IMPACT,
+    DOLLAR_IMPACT_WITH_FRINGE,
     LIVE,
+    PERCENT_COMMITMENT,
+    CPH_IMPACT,
     load_inputs,
     REQUIRED_COLUMNS,
     calculate_scenario_savings,
