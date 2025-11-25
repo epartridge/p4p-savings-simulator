@@ -205,6 +205,36 @@ def normalize_month_labels(months: pd.Index | list) -> list[str]:
     return normalized
 
 
+def sanitize_object_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Coerce mixed-type object columns to strings to satisfy Arrow conversions.
+
+    Streamlit's Arrow-backed table rendering expects string-like columns to be
+    homogeneously typed. Some optional template columns (for example Plan A
+    flags) may contain numeric placeholders, which leads to conversion errors
+    when a column mixes floats with strings. This helper converts only the
+    object-typed columns that contain non-string values, leaving numeric and
+    already-uniform string columns untouched.
+    """
+
+    sanitized = df.copy()
+    for column in sanitized.columns:
+        series = sanitized[column]
+        if series.dtype != object:
+            continue
+
+        non_null = series.dropna()
+        if non_null.empty:
+            sanitized[column] = series.astype(str).where(series.notna(), "")
+            continue
+
+        if non_null.apply(lambda value: isinstance(value, str)).all():
+            continue
+
+        sanitized[column] = series.apply(lambda value: "" if pd.isna(value) else str(value))
+
+    return sanitized
+
+
 def enforce_forward_month_selection(df: pd.DataFrame, month_columns: list[str]) -> pd.DataFrame:
     """Ensure that selecting a month also selects every later month in the year.
 
@@ -450,7 +480,10 @@ def main() -> None:
         st.session_state["latest_template_df"] = corrected_df
 
         st.subheader("UPH Plan Output Format")
-        st.dataframe(manual_result_df, use_container_width=True)
+        st.dataframe(
+            sanitize_object_columns(manual_result_df),
+            use_container_width=True,
+        )
 
         excel_bytes = make_download_excel(manual_result_df)
         st.download_button(
@@ -682,7 +715,10 @@ def main() -> None:
                 st.success(f"{result_label} total savings: ${result_total:,.0f}")
 
             st.subheader("UPH Plan Output Format")
-            st.dataframe(st.session_state["optimization_result_df"], use_container_width=True)
+            st.dataframe(
+                sanitize_object_columns(st.session_state["optimization_result_df"]),
+                use_container_width=True,
+            )
 
             greedy_df = st.session_state.get("greedy_result_df")
             if greedy_df is not None:
