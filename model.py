@@ -494,10 +494,10 @@ def build_greedy_schedule(
                 if cumulative_savings >= target_savings:
                     break
 
-        scheduled_df = ensure_final_month_live(
-            scheduled_df, preserve_month_order=True, only_if_currently_live=False
-        )
-        scheduled_df = apply_dc_live_locks(scheduled_df, preserve_month_order=True)
+    scheduled_df = ensure_final_month_live(
+        scheduled_df, preserve_month_order=True, only_if_currently_live=True
+    )
+    scheduled_df = apply_dc_live_locks(scheduled_df, preserve_month_order=True)
 
         normalized_live = _normalize_live_column(scheduled_df[LIVE]) == "yes"
         scheduled_df["IsLive"] = normalized_live
@@ -643,7 +643,7 @@ def build_greedy_schedule(
 
     # Ensure each DC is live in its final month and cascade forward, then re-lock
     scheduled_df = ensure_final_month_live(
-        scheduled_df, preserve_month_order=True, only_if_currently_live=False
+        scheduled_df, preserve_month_order=True, only_if_currently_live=True
     )
     scheduled_df = apply_dc_live_locks(scheduled_df, preserve_month_order=True)
 
@@ -843,7 +843,7 @@ def build_region_grouped_schedule(
                     break
 
         scheduled_df = ensure_final_month_live(
-            scheduled_df, preserve_month_order=True, only_if_currently_live=False
+            scheduled_df, preserve_month_order=True, only_if_currently_live=True
         )
         scheduled_df = apply_dc_live_locks(scheduled_df, preserve_month_order=True)
 
@@ -940,10 +940,10 @@ def build_region_grouped_schedule(
             )
 
     # Ensure each DC is live in its final month and cascade forward, then re-lock
-        scheduled_df = ensure_final_month_live(
-            scheduled_df, preserve_month_order=True, only_if_currently_live=False
-        )
-        scheduled_df = apply_dc_live_locks(scheduled_df, preserve_month_order=True)
+    scheduled_df = ensure_final_month_live(
+        scheduled_df, preserve_month_order=True, only_if_currently_live=True
+    )
+    scheduled_df = apply_dc_live_locks(scheduled_df, preserve_month_order=True)
 
     normalized_live = _normalize_live_column(scheduled_df[LIVE])
     scheduled_df["IsLive"] = normalized_live == "yes"
