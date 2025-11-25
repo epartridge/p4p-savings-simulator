@@ -399,21 +399,6 @@ def build_greedy_schedule(
 
     if prefer_late_golives:
         dc_numbers = list(scheduled_df[DC_ID].unique())
-        num_dcs = len(dc_numbers)
-        num_months = len(month_orders)
-
-        live_matrix = np.zeros((num_dcs, num_months), dtype=bool)
-        scheduled_mask = np.zeros(num_dcs, dtype=bool)
-
-        for dc_idx, dc_number in enumerate(dc_numbers):
-            dc_rows = scheduled_df[scheduled_df[DC_ID] == dc_number].sort_values(
-                "_month_order"
-            )
-            live_mask = _normalize_live_column(dc_rows[LIVE]) == "yes"
-            forward_live = np.maximum.accumulate(live_mask.to_numpy())
-            for row_idx, month_value in enumerate(dc_rows["_month_order"]):
-                live_matrix[dc_idx, month_index[month_value]] = forward_live[row_idx]
-            scheduled_mask[dc_idx] = forward_live.any()
 
         cumulative_savings = float(
             scheduled_df.loc[
@@ -442,8 +427,6 @@ def build_greedy_schedule(
             candidates: list[tuple[int, object, float]] = []
 
             for dc_idx, dc_number in enumerate(dc_numbers):
-                if scheduled_mask[dc_idx]:
-                    continue
                 if is_locked_dc(scheduled_df, dc_number):
                     continue
 
@@ -466,34 +449,45 @@ def build_greedy_schedule(
             candidates.sort(key=lambda candidate: candidate[2], reverse=True)
 
             for dc_idx, dc_number, _ in candidates:
-                if (
-                    max_initial_golives_per_month is not None
-                    and initial_counts[month_idx] >= max_initial_golives_per_month
-                ):
-                    break
-
-                dc_mask = scheduled_df[DC_ID] == dc_number
-                scheduled_df.loc[
-                    dc_mask & (scheduled_df["_month_order"] >= month_order), LIVE
+                simulated_df = scheduled_df.copy()
+                dc_mask = simulated_df[DC_ID] == dc_number
+                simulated_df.loc[
+                    dc_mask & (simulated_df["_month_order"] >= month_order), LIVE
                 ] = "Yes"
-
-                scheduled_df = apply_dc_live_locks(
-                    scheduled_df, preserve_month_order=True
+                simulated_df = apply_dc_live_locks(
+                    simulated_df, preserve_month_order=True
                 )
 
-                live_matrix[dc_idx, month_idx:] = True
-                scheduled_mask[dc_idx] = True
+                if max_initial_golives_per_month is not None:
+                    projected_counts = count_first_live_months(simulated_df)
+                    if (projected_counts > max_initial_golives_per_month).any():
+                        continue
+
+                scheduled_df = simulated_df
+
+                if max_initial_golives_per_month is not None:
+                    initial_counts = projected_counts
 
                 live_mask = _normalize_live_column(scheduled_df[LIVE]) == "yes"
                 cumulative_savings = float(
                     scheduled_df.loc[live_mask, DOLLAR_IMPACT].sum()
                 )
 
-                if max_initial_golives_per_month is not None:
-                    initial_counts[month_idx] += 1
-
                 if cumulative_savings >= target_savings:
                     break
+
+        if (
+            cumulative_savings < target_savings
+            and max_initial_golives_per_month is not None
+        ):
+            return build_greedy_schedule(
+                df,
+                target_savings,
+                max_initial_golives_per_month=None,
+                use_late_month_bias=use_late_month_bias,
+                late_month_bias=late_month_bias,
+                prefer_late_golives=prefer_late_golives,
+            )
 
     scheduled_df = ensure_final_month_live(
         scheduled_df, preserve_month_order=True, only_if_currently_live=True
@@ -741,13 +735,6 @@ def build_region_grouped_schedule(
     initial_counts = count_first_live_months(scheduled_df)
 
     if prefer_late_golives:
-        month_labels = [
-            scheduled_df.loc[
-                scheduled_df["_month_order"] == month_order, MONTH
-            ].iloc[0]
-            for month_order in month_orders
-        ]
-
         live_mask_overall = _normalize_live_column(scheduled_df[LIVE]) == "yes"
         cumulative_savings = float(
             scheduled_df.loc[live_mask_overall, DOLLAR_IMPACT].sum()
@@ -758,12 +745,6 @@ def build_region_grouped_schedule(
             index=False
         ):
             region_to_dcs.setdefault(region, set()).add(dc_number)
-
-        region_live_mask: dict[str, bool] = {}
-        for region, dcs in region_to_dcs.items():
-            region_live_mask[region] = any(
-                first_live_month_index(dc_number) is not None for dc_number in dcs
-            )
 
         for month_idx in range(len(month_orders) - 1, -1, -1):
             if cumulative_savings >= target_savings:
@@ -776,13 +757,9 @@ def build_region_grouped_schedule(
                 continue
 
             month_order = month_orders[month_idx]
-            month_label = month_labels[month_idx]
-            candidates: list[tuple[str, float, int]] = []
+            candidates: list[tuple[str, float]] = []
 
             for region, dcs in region_to_dcs.items():
-                if region_live_mask[region]:
-                    continue
-
                 region_rows = scheduled_df[scheduled_df[REGION] == region]
                 month_mask = region_rows["_month_order"] >= month_order
                 if not month_mask.any():
@@ -796,25 +773,29 @@ def build_region_grouped_schedule(
                     region_rows.loc[incremental_mask, DOLLAR_IMPACT].sum()
                 )
 
-                unscheduled_dcs = {
-                    dc_number
-                    for dc_number in dcs
-                    if first_live_month_index(dc_number) is None
-                }
-                new_starts = len(unscheduled_dcs)
-                if (
-                    max_initial_golives_per_month is not None
-                    and initial_counts[month_idx] + new_starts
-                    > max_initial_golives_per_month
-                ):
-                    continue
+                if max_initial_golives_per_month is not None and incremental_savings > 0:
+                    simulated_df = scheduled_df.copy()
+                    simulated_df.loc[
+                        (simulated_df[REGION] == region)
+                        & (simulated_df["_month_order"] == month_order),
+                        LIVE,
+                    ] = "Yes"
+                    simulated_df = enforce_forward_live_rows(
+                        simulated_df, preserve_month_order=True
+                    )
+                    simulated_df = apply_dc_live_locks(
+                        simulated_df, preserve_month_order=True
+                    )
+                    projected_counts = count_first_live_months(simulated_df)
+                    if (projected_counts > max_initial_golives_per_month).any():
+                        continue
 
                 if incremental_savings > 0:
-                    candidates.append((region, incremental_savings, new_starts))
+                    candidates.append((region, incremental_savings))
 
             candidates.sort(key=lambda candidate: candidate[1], reverse=True)
 
-            for region, _, new_starts in candidates:
+            for region, _ in candidates:
                 if (
                     max_initial_golives_per_month is not None
                     and initial_counts[month_idx] >= max_initial_golives_per_month
@@ -822,7 +803,7 @@ def build_region_grouped_schedule(
                     break
 
                 region_mask = scheduled_df[REGION] == region
-                month_mask = scheduled_df[MONTH] == month_label
+                month_mask = scheduled_df["_month_order"] == month_order
 
                 scheduled_df.loc[region_mask & month_mask, LIVE] = "Yes"
 
@@ -833,9 +814,8 @@ def build_region_grouped_schedule(
                     scheduled_df, preserve_month_order=True
                 )
 
-                region_live_mask[region] = True
                 if max_initial_golives_per_month is not None:
-                    initial_counts[month_idx] += new_starts
+                    initial_counts = count_first_live_months(scheduled_df)
 
                 live_mask = _normalize_live_column(scheduled_df[LIVE]) == "yes"
                 cumulative_savings = float(
@@ -844,6 +824,19 @@ def build_region_grouped_schedule(
 
                 if cumulative_savings >= target_savings:
                     break
+
+        if (
+            cumulative_savings < target_savings
+            and max_initial_golives_per_month is not None
+        ):
+            return build_region_grouped_schedule(
+                df,
+                target_savings,
+                max_initial_golives_per_month=None,
+                use_late_month_bias=use_late_month_bias,
+                late_month_bias=late_month_bias,
+                prefer_late_golives=prefer_late_golives,
+            )
 
         scheduled_df = ensure_final_month_live(
             scheduled_df, preserve_month_order=True, only_if_currently_live=True
