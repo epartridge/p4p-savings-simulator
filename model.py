@@ -934,14 +934,16 @@ def build_region_grouped_schedule(
             cumulative_savings < target_savings
             and max_initial_golives_per_month is not None
         ):
-            return build_region_grouped_schedule(
+            fallback_df, fallback_savings = build_region_grouped_schedule(
                 df,
                 target_savings,
-                max_initial_golives_per_month=None,
+                max_initial_golives_per_month=max_initial_golives_per_month,
                 use_late_month_bias=use_late_month_bias,
                 late_month_bias=late_month_bias,
-                prefer_late_golives=prefer_late_golives,
+                prefer_late_golives=False,
             )
+            if fallback_savings > cumulative_savings:
+                scheduled_df, cumulative_savings = fallback_df, fallback_savings
 
         if max_initial_golives_per_month is not None:
             scheduled_df = rebalance_initial_golives(
