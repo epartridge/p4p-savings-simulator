@@ -152,6 +152,7 @@ def build_calendar_pivot(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
         aggfunc="first",
     )
 
+    pivot.columns = normalize_month_labels(pivot.columns)
     pivot = pivot.reindex(columns=ordered_month_labels(pivot.columns), fill_value=False)
     pivot = pivot.fillna(False)
     pivot.columns.name = None
@@ -186,6 +187,22 @@ def ordered_month_labels(months: pd.Index | list) -> list:
     ordered = [month for month in MONTH_ORDER if month in month_set]
     extras = [month for month in months if month not in ordered]
     return ordered + extras
+
+
+def normalize_month_labels(months: pd.Index | list) -> list[str]:
+    """Return month labels coerced to plain strings for UI compatibility."""
+
+    normalized: list[str] = []
+    for month in months:
+        try:
+            numeric = float(month)
+            if numeric.is_integer():
+                normalized.append(str(int(numeric)))
+                continue
+        except (TypeError, ValueError):
+            pass
+        normalized.append(str(month))
+    return normalized
 
 
 def enforce_forward_month_selection(df: pd.DataFrame, month_columns: list[str]) -> pd.DataFrame:
