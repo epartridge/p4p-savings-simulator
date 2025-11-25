@@ -324,17 +324,17 @@ def build_greedy_schedule(
     max_initial_golives_per_month: int | None = None,
     use_late_month_bias: bool = False,
     late_month_bias: float = 0.0,
-    prefer_late_golives: bool = False,
+    prefer_late_golives: bool = True,
 ) -> tuple[pd.DataFrame, float]:
     """
     Starting from all Live? = 'No', greedily turn rows live one building at a time.
 
     Buildings (DCs) are ordered by their total annual impact and, within each
-    building, months are evaluated from latest to earliest. This ensures that if
-    the target is not met with later months, the algorithm keeps pulling earlier
-    months for the same building before moving on. When ``prefer_late_golives``
-    is True, the optimizer iterates months from latest to earliest and, within
-    each month, activates the highest incremental savings candidates first.
+    building, months are evaluated from latest to earliest so the optimizer
+    always prefers later go-live months when constraints allow. When
+    ``prefer_late_golives`` is True (the default), the optimizer iterates months
+    from latest to earliest and, within each month, activates the highest
+    incremental savings candidates first.
 
     Args:
         df: Input DataFrame containing at least the Dollar Impact column.
@@ -344,9 +344,10 @@ def build_greedy_schedule(
         late_month_bias: Optional multiplier that softly boosts later months when
             choosing go-live candidates. A value of 0.0 keeps the default
             behavior.
-        prefer_late_golives: If True, prioritize activating go-lives from the
-            latest months backward, selecting the largest incremental savings
-            options first in each month.
+        prefer_late_golives: Prioritize activating go-lives from the latest
+            months backward, selecting the largest incremental savings options
+            first in each month. Defaults to True for a built-in late-month
+            preference.
         max_initial_golives_per_month: Maximum number of DCs allowed to begin
             their go-live in the same month. If None, no limit is applied.
 
@@ -667,7 +668,7 @@ def build_region_grouped_schedule(
     max_initial_golives_per_month: int | None = None,
     use_late_month_bias: bool = False,
     late_month_bias: float = 0.0,
-    prefer_late_golives: bool = False,
+    prefer_late_golives: bool = True,
 ) -> tuple[pd.DataFrame, float]:
     """
     Greedily schedule savings by selecting whole regions in a month together.
@@ -676,7 +677,8 @@ def build_region_grouped_schedule(
     month go live together) starting from later months and then by descending monthly savings
     until the target is met. If later months do not reach the target, the algorithm keeps
     walking backward through earlier months for the same region before moving on to the next
-    region.
+    region. By default the optimizer prioritizes later go-live months whenever
+    constraints are satisfied.
 
     Args:
         df: Input DataFrame containing at least Region, Month, and Dollar Impact columns.
@@ -686,8 +688,9 @@ def build_region_grouped_schedule(
         late_month_bias: Optional multiplier that softly boosts later months when
             choosing go-live candidates. A value of 0.0 keeps the default
             behavior.
-        prefer_late_golives: If True, iterate months from latest to earliest and
-            activate the highest incremental savings regions first for each month.
+        prefer_late_golives: Iterate months from latest to earliest and activate
+            the highest incremental savings regions first for each month.
+            Defaults to True for a built-in late-month preference.
         max_initial_golives_per_month: Maximum number of DCs allowed to begin
             their go-live in the same month. If None, no limit is applied.
 
