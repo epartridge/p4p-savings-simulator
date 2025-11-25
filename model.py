@@ -499,17 +499,17 @@ def build_greedy_schedule(
     )
     scheduled_df = apply_dc_live_locks(scheduled_df, preserve_month_order=True)
 
-        normalized_live = _normalize_live_column(scheduled_df[LIVE]) == "yes"
-        scheduled_df["IsLive"] = normalized_live
-        scheduled_df["DollarImpactIncluded"] = scheduled_df[DOLLAR_IMPACT].where(
-            scheduled_df["IsLive"], other=0.0
-        )
+    normalized_live = _normalize_live_column(scheduled_df[LIVE]) == "yes"
+    scheduled_df["IsLive"] = normalized_live
+    scheduled_df["DollarImpactIncluded"] = scheduled_df[DOLLAR_IMPACT].where(
+        scheduled_df["IsLive"], other=0.0
+    )
 
-        cumulative_savings = float(scheduled_df["DollarImpactIncluded"].sum())
+    cumulative_savings = float(scheduled_df["DollarImpactIncluded"].sum())
 
-        scheduled_df = scheduled_df.drop(columns=["_month_order"], errors="ignore")
+    scheduled_df = scheduled_df.drop(columns=["_month_order"], errors="ignore")
 
-        return scheduled_df, cumulative_savings
+    return scheduled_df, cumulative_savings
 
     # Prioritize the highest impact buildings so we fill their calendars first.
     dc_priority = (
