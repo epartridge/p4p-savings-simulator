@@ -21,8 +21,21 @@ LIVE = "Live?"
 
 # Fixed go-live windows for specific DCs (DC Name keyed)
 DC_LIVE_LOCKS = {
-    "Houston": {"Feb", "Mar", "Apr", "May", "Jun", "Jul"},
-    "Winchester": {"Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct"},
+    # These DCs have fixed go-live windows but must still be live by FM12 (Jan).
+    # Include Jan so that the final-month requirement aligns with the lock rules.
+    "Houston": {"Feb", "Mar", "Apr", "May", "Jun", "Jul", "Jan"},
+    "Winchester": {
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Jan",
+    },
 }
 
 # Month ordering where Jan is treated as month 12 (after Dec)
@@ -260,15 +273,27 @@ def apply_dc_live_locks(df: pd.DataFrame, preserve_month_order: bool = False) ->
         locked_df["_month_order"] = locked_df[MONTH].apply(month_order_value)
         added_month_order = True
 
+    available_months = list(pd.unique(locked_df[MONTH].dropna()))
+    ordered_available_months = sorted(available_months, key=month_order_value)
+    month_label_map = {
+        month_name: ordered_available_months[idx]
+        for idx, month_name in enumerate(MONTH_ORDER)
+        if idx < len(ordered_available_months)
+    }
+
     for dc_name, allowed_live_months in DC_LIVE_LOCKS.items():
         dc_mask = locked_df[DC_NAME] == dc_name
         if not dc_mask.any():
             continue
 
-        # If the month labels do not overlap with the configured locks (e.g.,
-        # numeric months like 202601 instead of "Feb"), skip enforcement so we
-        # do not clear legitimate live values.
-        allowed_mask = locked_df[MONTH].isin(allowed_live_months)
+        allowed_labels = set()
+        for month_name in allowed_live_months:
+            mapped_label = month_label_map.get(month_name)
+            if mapped_label is not None:
+                allowed_labels.add(mapped_label)
+            allowed_labels.add(month_name)
+
+        allowed_mask = locked_df[MONTH].isin(allowed_labels)
         if not allowed_mask.any():
             continue
 
@@ -472,7 +497,7 @@ def build_greedy_schedule(
                     break
 
         scheduled_df = ensure_final_month_live(
-            scheduled_df, preserve_month_order=True, only_if_currently_live=True
+            scheduled_df, preserve_month_order=True, only_if_currently_live=False
         )
         scheduled_df = apply_dc_live_locks(scheduled_df, preserve_month_order=True)
 
@@ -620,7 +645,7 @@ def build_greedy_schedule(
 
     # Ensure each DC is live in its final month and cascade forward, then re-lock
     scheduled_df = ensure_final_month_live(
-        scheduled_df, preserve_month_order=True, only_if_currently_live=True
+        scheduled_df, preserve_month_order=True, only_if_currently_live=False
     )
     scheduled_df = apply_dc_live_locks(scheduled_df, preserve_month_order=True)
 
@@ -820,7 +845,7 @@ def build_region_grouped_schedule(
                     break
 
         scheduled_df = ensure_final_month_live(
-            scheduled_df, preserve_month_order=True, only_if_currently_live=True
+            scheduled_df, preserve_month_order=True, only_if_currently_live=False
         )
         scheduled_df = apply_dc_live_locks(scheduled_df, preserve_month_order=True)
 
@@ -917,10 +942,10 @@ def build_region_grouped_schedule(
             )
 
     # Ensure each DC is live in its final month and cascade forward, then re-lock
-    scheduled_df = ensure_final_month_live(
-        scheduled_df, preserve_month_order=True, only_if_currently_live=True
-    )
-    scheduled_df = apply_dc_live_locks(scheduled_df, preserve_month_order=True)
+        scheduled_df = ensure_final_month_live(
+            scheduled_df, preserve_month_order=True, only_if_currently_live=False
+        )
+        scheduled_df = apply_dc_live_locks(scheduled_df, preserve_month_order=True)
 
     normalized_live = _normalize_live_column(scheduled_df[LIVE])
     scheduled_df["IsLive"] = normalized_live == "yes"
