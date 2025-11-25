@@ -15,6 +15,7 @@ DC_NUMBER_NAME = "DC Number Name"
 MONTH = "Month"
 PERCENT_COMMITMENT = "%  Commitment"
 DOLLAR_IMPACT = "Dollar Impact"
+DOLLAR_IMPACT_WITH_FRINGE = "Dollar Impact w/ 32.73% Fringe"
 CPH_IMPACT = "CPH Impact"
 LIVE = "Live?"
 
@@ -46,14 +47,15 @@ REQUIRED_COLUMNS: Sequence[str] = (
     DC_NAME,
     DC_NUMBER_NAME,
     MONTH,
-    PERCENT_COMMITMENT,
     DOLLAR_IMPACT,
-    CPH_IMPACT,
+    DOLLAR_IMPACT_WITH_FRINGE,
     LIVE,
 )
 
 REQUIRED_INPUT_COLUMNS: Sequence[str] = tuple(
-    column for column in REQUIRED_COLUMNS if column != DC_NUMBER_NAME
+    column
+    for column in REQUIRED_COLUMNS
+    if column not in {DC_NUMBER_NAME, DOLLAR_IMPACT}
 )
 
 
@@ -72,10 +74,8 @@ def calculate_incremental_value_matrix(
     _ = params
 
     def ordered_month_labels(months: Sequence[object]) -> list:
-        month_set = set(months)
-        ordered = [month for month in MONTH_ORDER if month in month_set]
-        extras = [month for month in months if month not in ordered]
-        return ordered + extras
+        unique_months = pd.unique(list(months))
+        return sorted(unique_months, key=month_order_value)
 
     value_df = template_df.copy()
     value_df[LIVE] = "No"
@@ -182,6 +182,11 @@ def load_inputs(excel_source: object = "data/p4p_template.xlsx") -> pd.DataFrame
     if missing_columns:
         raise ValueError(f"Missing required columns: {', '.join(missing_columns)}")
 
+    # Always source the working Dollar Impact values from the fringe-inclusive field
+    # so downstream calculations and displays use the uplifted amounts while keeping
+    # the legacy column name for compatibility with the UI.
+    df[DOLLAR_IMPACT] = df[DOLLAR_IMPACT_WITH_FRINGE]
+
     df[DC_NUMBER_NAME] = df.apply(lambda row: format_dc_number_name(row[DC_ID], row[DC_NAME]), axis=1)
 
     return df
@@ -195,6 +200,14 @@ def _normalize_live_column(series: pd.Series) -> pd.Series:
 
 def month_order_value(month_label: str) -> int:
     """Return the ordering index for a month where Jan is treated as month 12."""
+    # Numeric-like month labels (e.g., 202601) should be ordered numerically so the
+    # most recent months appear later in the sequence.
+    try:
+        numeric_month = float(month_label)
+        if np.isfinite(numeric_month):
+            return int(numeric_month)
+    except (TypeError, ValueError):
+        pass
 
     try:
         return MONTH_ORDER.index(month_label) + 1
@@ -252,8 +265,15 @@ def apply_dc_live_locks(df: pd.DataFrame, preserve_month_order: bool = False) ->
         if not dc_mask.any():
             continue
 
+        # If the month labels do not overlap with the configured locks (e.g.,
+        # numeric months like 202601 instead of "Feb"), skip enforcement so we
+        # do not clear legitimate live values.
+        allowed_mask = locked_df[MONTH].isin(allowed_live_months)
+        if not allowed_mask.any():
+            continue
+
         locked_df.loc[dc_mask, LIVE] = "No"
-        locked_df.loc[dc_mask & locked_df[MONTH].isin(allowed_live_months), LIVE] = "Yes"
+        locked_df.loc[dc_mask & allowed_mask, LIVE] = "Yes"
 
     if added_month_order and not preserve_month_order:
         locked_df = locked_df.drop(columns=["_month_order"], errors="ignore")
