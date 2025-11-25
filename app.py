@@ -17,11 +17,17 @@ import streamlit as st
 
 import model
 from model import (
+    DC_ID,
+    DC_NAME,
     REGION,
     DC_NUMBER_NAME,
     MONTH,
     MONTH_ORDER,
+    DOLLAR_IMPACT,
+    DOLLAR_IMPACT_WITH_FRINGE,
     LIVE,
+    PERCENT_COMMITMENT,
+    CPH_IMPACT,
     load_inputs,
     REQUIRED_COLUMNS,
     calculate_scenario_savings,
@@ -32,7 +38,21 @@ from model import (
 )
 
 
-TEMPLATE_COLUMNS = list(REQUIRED_COLUMNS)
+TEMPLATE_COLUMNS = [
+    REGION,
+    DC_ID,
+    DC_NAME,
+    MONTH,
+    "Ramp",
+    "Baseline Hrs",
+    "Hours Saved",
+    DOLLAR_IMPACT,
+    DOLLAR_IMPACT_WITH_FRINGE,
+    LIVE,
+    DC_NUMBER_NAME,
+    PERCENT_COMMITMENT,
+    CPH_IMPACT,
+]
 LATE_MONTH_BIAS_STRENGTH = 0.6
 
 
