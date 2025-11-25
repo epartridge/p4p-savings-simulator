@@ -255,23 +255,30 @@ def sanitize_object_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def enforce_forward_month_selection(df: pd.DataFrame, month_columns: list[str]) -> pd.DataFrame:
-    """Ensure that selecting a month also selects every later month in the year.
+    """Ensure month selections form a contiguous block from the first live month.
 
     When a user marks a DC as live for a given month, it typically stays live in
-    all subsequent months. This function scans across each row from the earliest
-    month to the latest and auto-fills later months once the first ``True`` is
-    encountered.
+    all subsequent months. Conversely, if they uncheck a given month, the months
+    before it should also be unchecked to avoid gaps. This helper scans each row
+    and enforces that months remain ``False`` until the earliest selected month
+    and ``True`` thereafter.
     """
 
     ordered_months = ordered_month_labels(month_columns)
     enforced_df = df.copy()
     for idx, row in enforced_df.iterrows():
-        seen_selected = False
-        for month in ordered_months:
-            current_value = bool(row.get(month, False))
-            seen_selected = seen_selected or current_value
-            if seen_selected:
-                enforced_df.at[idx, month] = True
+        first_selected_idx: int | None = None
+        for month_idx, month in enumerate(ordered_months):
+            if bool(row.get(month, False)):
+                first_selected_idx = month_idx
+                break
+
+        for month_idx, month in enumerate(ordered_months):
+            enforced_df.at[idx, month] = (
+                False
+                if first_selected_idx is None
+                else month_idx >= first_selected_idx
+            )
     return enforced_df
 
 
@@ -645,14 +652,9 @@ def main() -> None:
             return
 
             st.subheader("Run Optimizations")
-        col1, col2, col3 = st.columns([2, 2, 2])
+        col1, col2 = st.columns([2, 2])
         run_greedy = col1.button("Run greedy by Dollar Impact", width="stretch")
         run_region_grouped = col2.button("Run region-grouped schedule", width="stretch")
-        prefer_late_months = col3.toggle(
-            "Prefer later go-lives",
-            value=False,
-            help="Prioritize later go-lives when selecting schedule candidates.",
-        )
 
         if run_greedy:
             # Greedy algorithm prioritizes later months before turning on the
@@ -661,8 +663,8 @@ def main() -> None:
                 df,
                 target_savings,
                 max_initial_golives_per_month=int(max_initial_golives_per_month),
-                use_late_month_bias=prefer_late_months,
-                prefer_late_golives=prefer_late_months,
+                use_late_month_bias=True,
+                prefer_late_golives=True,
                 late_month_bias=LATE_MONTH_BIAS_STRENGTH,
             )
             _, greedy_total = calculate_scenario_savings(greedy_df)
@@ -680,8 +682,8 @@ def main() -> None:
                 df,
                 target_savings,
                 max_initial_golives_per_month=int(max_initial_golives_per_month),
-                use_late_month_bias=prefer_late_months,
-                prefer_late_golives=prefer_late_months,
+                use_late_month_bias=True,
+                prefer_late_golives=True,
                 late_month_bias=LATE_MONTH_BIAS_STRENGTH,
             )
             _, region_total = calculate_scenario_savings(region_df)
