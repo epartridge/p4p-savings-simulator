@@ -15,6 +15,7 @@ DC_NUMBER_NAME = "DC Number Name"
 MONTH = "Month"
 PERCENT_COMMITMENT = "%  Commitment"
 DOLLAR_IMPACT = "Dollar Impact"
+DOLLAR_IMPACT_WITH_FRINGE = "Dollar Impact w/ 32.73% Fringe"
 CPH_IMPACT = "CPH Impact"
 LIVE = "Live?"
 
@@ -46,14 +47,15 @@ REQUIRED_COLUMNS: Sequence[str] = (
     DC_NAME,
     DC_NUMBER_NAME,
     MONTH,
-    PERCENT_COMMITMENT,
     DOLLAR_IMPACT,
-    CPH_IMPACT,
+    DOLLAR_IMPACT_WITH_FRINGE,
     LIVE,
 )
 
 REQUIRED_INPUT_COLUMNS: Sequence[str] = tuple(
-    column for column in REQUIRED_COLUMNS if column != DC_NUMBER_NAME
+    column
+    for column in REQUIRED_COLUMNS
+    if column not in {DC_NUMBER_NAME, DOLLAR_IMPACT}
 )
 
 
@@ -181,6 +183,11 @@ def load_inputs(excel_source: object = "data/p4p_template.xlsx") -> pd.DataFrame
     missing_columns: List[str] = [col for col in REQUIRED_INPUT_COLUMNS if col not in df.columns]
     if missing_columns:
         raise ValueError(f"Missing required columns: {', '.join(missing_columns)}")
+
+    # Always source the working Dollar Impact values from the fringe-inclusive field
+    # so downstream calculations and displays use the uplifted amounts while keeping
+    # the legacy column name for compatibility with the UI.
+    df[DOLLAR_IMPACT] = df[DOLLAR_IMPACT_WITH_FRINGE]
 
     df[DC_NUMBER_NAME] = df.apply(lambda row: format_dc_number_name(row[DC_ID], row[DC_NAME]), axis=1)
 
