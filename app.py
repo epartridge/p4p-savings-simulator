@@ -13,6 +13,7 @@ import io
 
 import altair as alt
 import pandas as pd
+from pandas.api.types import is_numeric_dtype
 import streamlit as st
 
 import model
@@ -250,6 +251,13 @@ def rebuild_dataset_from_pivot(
 
     updated_df = template_df.copy()
     updated_df[LIVE] = "No"
+
+    # Ensure the month column on both frames uses the same dtype so merges do
+    # not fail when template data mixes numeric and string month formats.
+    if is_numeric_dtype(edited_long[MONTH]):
+        updated_df[MONTH] = pd.to_numeric(updated_df[MONTH], errors="coerce")
+    else:
+        updated_df[MONTH] = updated_df[MONTH].astype(str)
 
     merged = updated_df.merge(
         edited_long,
