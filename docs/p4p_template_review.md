@@ -4,6 +4,7 @@
 - **File:** `data/p4p_template.xlsx`
 - **Sheets:** `DC Rollout Template`, `DC Rollout Template OLD`.
 - The new sheet has **229 rows x 17 columns**, while the archived sheet has **228 rows x 12 columns**.
+- Simulator validation now keys off the shared fields present in both sheets: Region, DC ID, DC Name, Month, **Dollar Impact w/ 32.73% Fringe**, and Live?. Legacy fields like **% Commitment** and **CPH Impact** are optional.
 
 ## New `DC Rollout Template` columns
 - Region, DC ID, DC Name, Month, Ramp, Baseline Hrs, Hours Saved, Dollar Impact, Dollar Impact w/ 32.73% Fringe, Live?, column 10 (blank header), **Plan A - High Certainty (Houston /Winchester 1H)**, columns 12–16 (blank headers). The simulator now treats **Dollar Impact w/ 32.73% Fringe** as the canonical value while retaining the "Dollar Impact" label in the UI for continuity.

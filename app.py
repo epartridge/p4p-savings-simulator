@@ -32,7 +32,21 @@ from model import (
 )
 
 
-TEMPLATE_COLUMNS = list(REQUIRED_COLUMNS)
+TEMPLATE_COLUMNS = [
+    REGION,
+    DC_ID,
+    DC_NAME,
+    MONTH,
+    "Ramp",
+    "Baseline Hrs",
+    "Hours Saved",
+    DOLLAR_IMPACT,
+    DOLLAR_IMPACT_WITH_FRINGE,
+    LIVE,
+    DC_NUMBER_NAME,
+    PERCENT_COMMITMENT,
+    CPH_IMPACT,
+]
 LATE_MONTH_BIAS_STRENGTH = 0.6
 
 
