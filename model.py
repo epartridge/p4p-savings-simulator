@@ -19,11 +19,10 @@ DOLLAR_IMPACT_WITH_FRINGE = "Dollar Impact w/ 32.73% Fringe"
 CPH_IMPACT = "CPH Impact"
 LIVE = "Live?"
 
-# Fixed go-live windows for specific DCs (DC Name keyed)
+# Fixed go-live windows for specific DCs (DC Name keyed).
+# The final-month requirement does not apply to these DCs.
 DC_LIVE_LOCKS = {
-    # These DCs have fixed go-live windows but must still be live by FM12 (Jan).
-    # Include Jan so that the final-month requirement aligns with the lock rules.
-    "Houston": {"Feb", "Mar", "Apr", "May", "Jun", "Jul", "Jan"},
+    "Houston": {"Feb", "Mar", "Apr", "May", "Jun", "Jul"},
     "Winchester": {
         "Feb",
         "Mar",
@@ -34,7 +33,6 @@ DC_LIVE_LOCKS = {
         "Aug",
         "Sep",
         "Oct",
-        "Jan",
     },
 }
 
@@ -87,7 +85,7 @@ def calculate_incremental_value_matrix(
     _ = params
 
     def ordered_month_labels(months: Sequence[object]) -> list:
-        unique_months = pd.unique(list(months))
+        unique_months = pd.Index(months).unique()
         return sorted(unique_months, key=month_order_value)
 
     value_df = template_df.copy()
@@ -1021,15 +1019,20 @@ def ensure_final_month_live(
         added_month_order = True
 
     final_month_per_dc = ensured_df.groupby(DC_ID)["_month_order"].transform("max")
+    locked_dcs = {
+        dc_number
+        for dc_number in ensured_df[DC_ID].unique()
+        if is_locked_dc(ensured_df, dc_number)
+    }
+    final_month_mask = ensured_df["_month_order"] == final_month_per_dc
     if only_if_currently_live:
         live_mask = _normalize_live_column(ensured_df[LIVE]) == "yes"
         currently_live_dcs = set(ensured_df.loc[live_mask, DC_ID])
-        locked_dcs = {dc_number for dc_number in ensured_df[DC_ID].unique() if is_locked_dc(ensured_df, dc_number)}
-        eligible_dcs = currently_live_dcs | locked_dcs
-        final_month_mask = ensured_df["_month_order"] == final_month_per_dc
+        eligible_dcs = currently_live_dcs - locked_dcs
         ensured_df.loc[final_month_mask & ensured_df[DC_ID].isin(eligible_dcs), LIVE] = "Yes"
     else:
-        ensured_df.loc[ensured_df["_month_order"] == final_month_per_dc, LIVE] = "Yes"
+        unconstrained_final_months = final_month_mask & ~ensured_df[DC_ID].isin(locked_dcs)
+        ensured_df.loc[unconstrained_final_months, LIVE] = "Yes"
 
     ensured_df = enforce_forward_live_rows(ensured_df, preserve_month_order=True)
 

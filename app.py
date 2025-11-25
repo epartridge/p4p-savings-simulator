@@ -36,6 +36,7 @@ from model import (
     apply_dc_live_locks,
     build_greedy_schedule,
     build_region_grouped_schedule,
+    month_order_value,
 )
 
 
@@ -123,6 +124,17 @@ def build_reset_calendar(df: pd.DataFrame) -> pd.DataFrame:
     return reset_pivot
 
 
+def build_full_calendar(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a fully selected calendar that honors locked DC constraints."""
+
+    full_df = df.copy()
+    full_df[LIVE] = "Yes"
+    full_df = ensure_final_month_live(full_df)
+    full_df = apply_dc_live_locks(full_df)
+    full_pivot, _ = build_calendar_pivot(full_df)
+    return full_pivot
+
+
 def normalize_live_bool(series: pd.Series) -> pd.Series:
     """Convert a column containing "Yes"/"No" text into booleans.
 
@@ -183,10 +195,7 @@ def ordered_month_labels(months: pd.Index | list) -> list:
     preserve the data while keeping known months in a predictable order.
     """
 
-    month_set = set(months)
-    ordered = [month for month in MONTH_ORDER if month in month_set]
-    extras = [month for month in months if month not in ordered]
-    return ordered + extras
+    return sorted(months, key=month_order_value)
 
 
 def normalize_month_labels(months: pd.Index | list) -> list[str]:
@@ -203,6 +212,16 @@ def normalize_month_labels(months: pd.Index | list) -> list[str]:
             pass
         normalized.append(str(month))
     return normalized
+
+
+def build_month_label_map(months: list[str]) -> dict[str, str]:
+    """Map underlying month values to fiscal month names for UI labels."""
+
+    ordered_months = sorted(months, key=month_order_value)
+    label_map: dict[str, str] = {}
+    for idx, month in enumerate(ordered_months):
+        label_map[month] = MONTH_ORDER[idx] if idx < len(MONTH_ORDER) else str(month)
+    return label_map
 
 
 def sanitize_object_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -395,6 +414,8 @@ def main() -> None:
 
     base_pivot_reset, month_columns = build_calendar_pivot(base_df)
 
+    month_label_map = build_month_label_map(month_columns)
+
     if "manual_pivot_data" not in st.session_state:
         st.session_state["manual_pivot_data"] = base_pivot_reset
     if "optimization_calendar" not in st.session_state:
@@ -414,7 +435,12 @@ def main() -> None:
         ),
     }
     column_config.update(
-        {month: st.column_config.CheckboxColumn(label=month, width="small") for month in month_columns}
+        {
+            month: st.column_config.CheckboxColumn(
+                label=month_label_map.get(month, month), width="small"
+            )
+            for month in month_columns
+        }
     )
 
     column_order = [REGION, DC_NUMBER_NAME] + month_columns
@@ -454,8 +480,11 @@ def main() -> None:
                     "Consider adjusting selections or running optimizations."
                 )
 
-        header_col, reset_col = st.columns([6, 1])
+        header_col, select_all_col, reset_col = st.columns([6, 1, 1])
         header_col.subheader("DC Go-Live Calendar")
+        if select_all_col.button("Select All", key="manual_calendar_select_all"):
+            st.session_state["manual_pivot_data"] = build_full_calendar(df)
+            rerun()
         if reset_col.button("Reset", key="manual_calendar_reset"):
             st.session_state["manual_pivot_data"] = build_reset_calendar(df)
             rerun()
@@ -674,8 +703,11 @@ def main() -> None:
             _, optimization_calendar_total = calculate_scenario_savings(optimization_df)
             st.session_state["optimization_result_total"] = optimization_calendar_total
 
-        header_col, reset_col = st.columns([6, 1])
+        header_col, select_all_col, reset_col = st.columns([6, 1, 1])
         header_col.subheader("DC Go-Live Calendar")
+        if select_all_col.button("Select All", key="optimization_calendar_select_all"):
+            st.session_state["optimization_calendar"] = build_full_calendar(df)
+            rerun()
         if reset_col.button("Reset", key="optimization_calendar_reset"):
             st.session_state["optimization_calendar"] = build_reset_calendar(df)
             st.session_state.pop("optimization_result_df", None)
