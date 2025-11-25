@@ -13,15 +13,22 @@ import io
 
 import altair as alt
 import pandas as pd
+from pandas.api.types import is_numeric_dtype
 import streamlit as st
 
 import model
 from model import (
+    DC_ID,
+    DC_NAME,
     REGION,
     DC_NUMBER_NAME,
     MONTH,
     MONTH_ORDER,
+    DOLLAR_IMPACT,
+    DOLLAR_IMPACT_WITH_FRINGE,
     LIVE,
+    PERCENT_COMMITMENT,
+    CPH_IMPACT,
     load_inputs,
     REQUIRED_COLUMNS,
     calculate_scenario_savings,
@@ -32,7 +39,21 @@ from model import (
 )
 
 
-TEMPLATE_COLUMNS = list(REQUIRED_COLUMNS)
+TEMPLATE_COLUMNS = [
+    REGION,
+    DC_ID,
+    DC_NAME,
+    MONTH,
+    "Ramp",
+    "Baseline Hrs",
+    "Hours Saved",
+    DOLLAR_IMPACT,
+    DOLLAR_IMPACT_WITH_FRINGE,
+    LIVE,
+    DC_NUMBER_NAME,
+    PERCENT_COMMITMENT,
+    CPH_IMPACT,
+]
 LATE_MONTH_BIAS_STRENGTH = 0.6
 
 
@@ -131,6 +152,7 @@ def build_calendar_pivot(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
         aggfunc="first",
     )
 
+    pivot.columns = normalize_month_labels(pivot.columns)
     pivot = pivot.reindex(columns=ordered_month_labels(pivot.columns), fill_value=False)
     pivot = pivot.fillna(False)
     pivot.columns.name = None
@@ -165,6 +187,52 @@ def ordered_month_labels(months: pd.Index | list) -> list:
     ordered = [month for month in MONTH_ORDER if month in month_set]
     extras = [month for month in months if month not in ordered]
     return ordered + extras
+
+
+def normalize_month_labels(months: pd.Index | list) -> list[str]:
+    """Return month labels coerced to plain strings for UI compatibility."""
+
+    normalized: list[str] = []
+    for month in months:
+        try:
+            numeric = float(month)
+            if numeric.is_integer():
+                normalized.append(str(int(numeric)))
+                continue
+        except (TypeError, ValueError):
+            pass
+        normalized.append(str(month))
+    return normalized
+
+
+def sanitize_object_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Coerce mixed-type object columns to strings to satisfy Arrow conversions.
+
+    Streamlit's Arrow-backed table rendering expects string-like columns to be
+    homogeneously typed. Some optional template columns (for example Plan A
+    flags) may contain numeric placeholders, which leads to conversion errors
+    when a column mixes floats with strings. This helper converts only the
+    object-typed columns that contain non-string values, leaving numeric and
+    already-uniform string columns untouched.
+    """
+
+    sanitized = df.copy()
+    for column in sanitized.columns:
+        series = sanitized[column]
+        if series.dtype != object:
+            continue
+
+        non_null = series.dropna()
+        if non_null.empty:
+            sanitized[column] = series.astype(str).where(series.notna(), "")
+            continue
+
+        if non_null.apply(lambda value: isinstance(value, str)).all():
+            continue
+
+        sanitized[column] = series.apply(lambda value: "" if pd.isna(value) else str(value))
+
+    return sanitized
 
 
 def enforce_forward_month_selection(df: pd.DataFrame, month_columns: list[str]) -> pd.DataFrame:
@@ -230,6 +298,13 @@ def rebuild_dataset_from_pivot(
 
     updated_df = template_df.copy()
     updated_df[LIVE] = "No"
+
+    # Ensure the month column on both frames uses the same dtype so merges do
+    # not fail when template data mixes numeric and string month formats.
+    if is_numeric_dtype(edited_long[MONTH]):
+        updated_df[MONTH] = pd.to_numeric(updated_df[MONTH], errors="coerce")
+    else:
+        updated_df[MONTH] = updated_df[MONTH].astype(str)
 
     merged = updated_df.merge(
         edited_long,
@@ -405,7 +480,10 @@ def main() -> None:
         st.session_state["latest_template_df"] = corrected_df
 
         st.subheader("UPH Plan Output Format")
-        st.dataframe(manual_result_df, use_container_width=True)
+        st.dataframe(
+            sanitize_object_columns(manual_result_df),
+            use_container_width=True,
+        )
 
         excel_bytes = make_download_excel(manual_result_df)
         st.download_button(
@@ -637,7 +715,10 @@ def main() -> None:
                 st.success(f"{result_label} total savings: ${result_total:,.0f}")
 
             st.subheader("UPH Plan Output Format")
-            st.dataframe(st.session_state["optimization_result_df"], use_container_width=True)
+            st.dataframe(
+                sanitize_object_columns(st.session_state["optimization_result_df"]),
+                use_container_width=True,
+            )
 
             greedy_df = st.session_state.get("greedy_result_df")
             if greedy_df is not None:
