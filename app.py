@@ -334,9 +334,11 @@ def align_month_dtype(month_values: pd.Series, template_months: pd.Series) -> pd
     to the same type where possible.
     """
 
-    template_numeric = pd.to_numeric(template_months, errors="coerce")
-    if not template_numeric.isna().any():
-        return pd.to_numeric(month_values, errors="coerce")
+    if pd.api.types.is_numeric_dtype(template_months):
+        coerced = pd.to_numeric(month_values, errors="coerce")
+        # Preserve the template's numeric dtype (often float) so merge keys match exactly.
+        return coerced.astype(template_months.dtype, copy=False)
+
     return month_values.astype(str)
 
 
