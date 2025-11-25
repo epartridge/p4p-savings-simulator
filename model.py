@@ -732,6 +732,111 @@ def build_region_grouped_schedule(
                 counts[first_live_idx] += 1
         return counts
 
+    def move_dc_to_month(
+        working_df: pd.DataFrame, dc_number: object, target_month_idx: int
+    ) -> pd.DataFrame:
+        """Reschedule a DC so its first live month occurs at ``target_month_idx``."""
+
+        target_month_order = month_orders[target_month_idx]
+        dc_mask = working_df[DC_ID] == dc_number
+
+        updated_df = working_df.copy()
+        updated_df.loc[dc_mask, LIVE] = "No"
+        updated_df.loc[
+            dc_mask & (updated_df["_month_order"] >= target_month_order), LIVE
+        ] = "Yes"
+
+        updated_df = enforce_forward_live_rows(updated_df, preserve_month_order=True)
+        updated_df = apply_dc_live_locks(updated_df, preserve_month_order=True)
+
+        return updated_df
+
+    def rebalance_initial_golives(
+        working_df: pd.DataFrame, *, max_allowed: int
+    ) -> pd.DataFrame:
+        """Ensure no month exceeds the maximum number of initial go-lives."""
+
+        rebalanced_df = working_df.copy()
+        current_counts = count_first_live_months(rebalanced_df)
+
+        for month_idx in range(len(month_orders) - 1, -1, -1):
+            if current_counts[month_idx] <= max_allowed:
+                continue
+
+            overage = int(current_counts[month_idx] - max_allowed)
+            candidate_dcs: list[tuple[float, object]] = []
+
+            for dc_number in rebalanced_df[DC_ID].unique():
+                if is_locked_dc(rebalanced_df, dc_number):
+                    continue
+
+                first_live_idx = first_live_month_index(
+                    dc_number, df_slice=rebalanced_df
+                )
+                if first_live_idx != month_idx:
+                    continue
+
+                total_value = float(
+                    rebalanced_df.loc[
+                        rebalanced_df[DC_ID] == dc_number, DOLLAR_IMPACT
+                    ].sum()
+                )
+                candidate_dcs.append((total_value, dc_number))
+
+            candidate_dcs.sort(key=lambda entry: entry[0])
+
+            for _, dc_number in candidate_dcs:
+                if overage <= 0:
+                    break
+
+                target_idx = month_idx + 1
+                while (
+                    target_idx < len(month_orders)
+                    and current_counts[target_idx] >= max_allowed
+                ):
+                    target_idx += 1
+
+                if target_idx >= len(month_orders):
+                    break
+
+                rebalanced_df = move_dc_to_month(rebalanced_df, dc_number, target_idx)
+                current_counts = count_first_live_months(rebalanced_df)
+                overage = int(current_counts[month_idx] - max_allowed)
+
+        return rebalanced_df
+
+    def activate_missing_dcs(
+        working_df: pd.DataFrame, *, max_allowed: int | None
+    ) -> pd.DataFrame:
+        """Turn on any DCs that never went live while respecting go-live caps."""
+
+        activated_df = working_df.copy()
+        current_counts = count_first_live_months(activated_df)
+
+        for dc_number in activated_df[DC_ID].unique():
+            if is_locked_dc(activated_df, dc_number):
+                continue
+
+            if first_live_month_index(dc_number, df_slice=activated_df) is not None:
+                continue
+
+            target_idx: int | None = None
+            if max_allowed is None:
+                target_idx = len(month_orders) - 1
+            else:
+                for month_idx in range(len(month_orders) - 1, -1, -1):
+                    if current_counts[month_idx] < max_allowed:
+                        target_idx = month_idx
+                        break
+
+                if target_idx is None:
+                    target_idx = len(month_orders) - 1
+
+            activated_df = move_dc_to_month(activated_df, dc_number, target_idx)
+            current_counts = count_first_live_months(activated_df)
+
+        return activated_df
+
     initial_counts = count_first_live_months(scheduled_df)
 
     if prefer_late_golives:
@@ -838,6 +943,15 @@ def build_region_grouped_schedule(
                 prefer_late_golives=prefer_late_golives,
             )
 
+        if max_initial_golives_per_month is not None:
+            scheduled_df = rebalance_initial_golives(
+                scheduled_df, max_allowed=max_initial_golives_per_month
+            )
+
+        scheduled_df = activate_missing_dcs(
+            scheduled_df, max_allowed=max_initial_golives_per_month
+        )
+
         scheduled_df = ensure_final_month_live(
             scheduled_df, preserve_month_order=True, only_if_currently_live=True
         )
@@ -934,6 +1048,15 @@ def build_region_grouped_schedule(
             cumulative_savings = float(
                 scheduled_df.loc[live_mask, DOLLAR_IMPACT].sum()
             )
+
+    if max_initial_golives_per_month is not None:
+        scheduled_df = rebalance_initial_golives(
+            scheduled_df, max_allowed=max_initial_golives_per_month
+        )
+
+    scheduled_df = activate_missing_dcs(
+        scheduled_df, max_allowed=max_initial_golives_per_month
+    )
 
     # Ensure each DC is live in its final month and cascade forward, then re-lock
     scheduled_df = ensure_final_month_live(
